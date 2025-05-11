@@ -1,0 +1,19 @@
+branch-defaults:
+  main:
+    environment: ecommerce-api-env
+    group_suffix: null
+
+global:
+  application_name: ecommerce-api
+  branch: null
+  default_ec2_keyname: null
+  default_platform: Node.js 18
+  default_region: us-east-1
+  include_git_submodules: true
+  instance_profile: null
+  platform_name: null
+  platform_version: null
+  profile: null
+  repository: null
+  sc: null
+  workspace_type: Application
