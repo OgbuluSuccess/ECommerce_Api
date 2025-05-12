@@ -4,6 +4,40 @@ const User = require('../models/user.model');
 const Product = require('../models/product.model');
 const Order = require('../models/order.model');
 const { protect, restrictTo } = require('../middleware/auth.middleware');
+const bcrypt = require('bcryptjs');
+
+/**
+ * @swagger
+ * /admin/users:
+ *   post:
+ *     summary: Create a new user (admin only)
+ *     tags: [Admin]
+ *     
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - email
+ *               - password
+ *               - role
+ *             properties:
+ *               name:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *               role:
+ *                 type: string
+ *                 enum: [user, admin]
+ *     responses:
+ *       201:
+ *         description: User created successfully
+ */
 
 /**
  * @swagger
@@ -103,41 +137,230 @@ const { protect, restrictTo } = require('../middleware/auth.middleware');
  *         description: Inventory statistics retrieved successfully
  */
 
-// Protect all routes after this middleware
-router.use(protect);
-router.use(restrictTo('admin'));
+// Create new user (admin only) - Public endpoint
+router.post('/users', async (req, res) => {
+  try {
+    const { name, email, password, role } = req.body;
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists'
+      });
+    }
+
+    // Create new user
+    const user = await User.create({
+      name,
+      email,
+      password,
+      role
+    });
+
+    // Remove password from output
+    user.password = undefined;
+
+    res.status(201).json({
+      success: true,
+      data: user
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// Get all users
+router.get('/users', protect, restrictTo('admin'), async (req, res) => {
+  try {
+    const users = await User.find().select('-password');
+    res.status(200).json({
+      success: true,
+      results: users.length,
+      data: users
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// Get user by ID
+router.get('/users/:id', protect, restrictTo('admin'), async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select('-password');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: user
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// Update user
+router.patch('/users/:id', protect, restrictTo('admin'), async (req, res) => {
+  try {
+    const updates = { ...req.body };
+    
+    // If password is being updated, hash it
+    if (updates.password) {
+      updates.password = await bcrypt.hash(updates.password, 12);
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      updates,
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: user
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// Delete user
+router.delete('/users/:id', protect, restrictTo('admin'), async (req, res) => {
+  try {
+    const user = await User.findByIdAndDelete(req.params.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'User deleted successfully'
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
 
 // Get dashboard statistics
-router.get('/dashboard', async (req, res) => {
+router.get('/dashboard', protect, restrictTo('admin'), async (req, res) => {
   try {
+    // Basic statistics
     const totalUsers = await User.countDocuments({ role: 'user' });
     const totalProducts = await Product.countDocuments();
     const totalOrders = await Order.countDocuments();
 
-    // Calculate total revenue
+    // User growth analytics
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const newUsers = await User.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: thirtyDaysAgo },
+          role: 'user'
+        }
+      },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Revenue analytics
     const orders = await Order.find({ status: { $ne: 'cancelled' } });
     const totalRevenue = orders.reduce((acc, order) => acc + order.totalAmount, 0);
 
-    // Get recent orders
+    // Order analytics
+    const orderStatusCount = await Order.aggregate([
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Recent orders with more details
     const recentOrders = await Order.find()
       .populate('user', 'name email')
+      .populate('items.product', 'name price')
       .sort('-createdAt')
       .limit(5);
 
-    // Get low stock products
+    // Inventory analytics
     const lowStockProducts = await Product.find({ stock: { $lt: 10 } })
-      .select('name stock price')
+      .select('name stock price category')
       .limit(5);
+
+    const stockSummary = await Product.aggregate([
+      {
+        $group: {
+          _id: '$category',
+          totalProducts: { $sum: 1 },
+          averageStock: { $avg: '$stock' },
+          totalValue: { $sum: { $multiply: ['$price', '$stock'] } }
+        }
+      }
+    ]);
 
     res.status(200).json({
       success: true,
       data: {
-        totalUsers,
-        totalProducts,
-        totalOrders,
-        totalRevenue,
-        recentOrders,
-        lowStockProducts
+        overview: {
+          totalUsers,
+          totalProducts,
+          totalOrders,
+          totalRevenue
+        },
+        userAnalytics: {
+          newUsers,
+          userGrowth: newUsers.length > 0 ? ((newUsers[newUsers.length - 1].count - newUsers[0].count) / newUsers[0].count) * 100 : 0
+        },
+        orderAnalytics: {
+          recentOrders,
+          orderStatusDistribution: orderStatusCount,
+          averageOrderValue: totalOrders > 0 ? totalRevenue / totalOrders : 0
+        },
+        inventoryAnalytics: {
+          lowStockProducts,
+          stockSummary,
+          totalInventoryValue: stockSummary.reduce((acc, category) => acc + category.totalValue, 0)
+        }
       }
     });
   } catch (error) {
@@ -149,7 +372,7 @@ router.get('/dashboard', async (req, res) => {
 });
 
 // Get all users
-router.get('/users', async (req, res) => {
+router.get('/users', protect, restrictTo('admin'), async (req, res) => {
   try {
     const users = await User.find().select('-password');
 
@@ -167,7 +390,7 @@ router.get('/users', async (req, res) => {
 });
 
 // Update user role
-router.patch('/users/:id/role', async (req, res) => {
+router.patch('/users/:id/role', protect, restrictTo('admin'), async (req, res) => {
   try {
     const { role } = req.body;
 
@@ -197,7 +420,7 @@ router.patch('/users/:id/role', async (req, res) => {
 });
 
 // Get sales statistics
-router.get('/sales', async (req, res) => {
+router.get('/sales', protect, restrictTo('admin'), async (req, res) => {
   try {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 30); // Last 30 days
@@ -213,11 +436,89 @@ router.get('/sales', async (req, res) => {
         $group: {
           _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
           sales: { $sum: '$totalAmount' },
-          orders: { $sum: 1 }
+          orders: { $sum: 1 },
+          averageOrderValue: { $avg: '$totalAmount' }
         }
       },
       { $sort: { _id: 1 } }
     ]);
+
+    // Get top selling products
+    const topProducts = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startDate },
+          status: { $ne: 'cancelled' }
+        }
+      },
+      { $unwind: '$items' },
+      {
+        $group: {
+          _id: '$items.product',
+          totalQuantity: { $sum: '$items.quantity' },
+          totalRevenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } }
+        }
+      },
+      { $sort: { totalQuantity: -1 } },
+      { $limit: 5 },
+      {
+        $lookup: {
+          from: 'products',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'product'
+        }
+      },
+      { $unwind: '$product' },
+      {
+        $project: {
+          name: '$product.name',
+          totalQuantity: 1,
+          totalRevenue: 1
+        }
+      }
+    ]);
+
+    // Calculate sales growth
+    const previousStartDate = new Date(startDate);
+    previousStartDate.setDate(previousStartDate.getDate() - 30);
+    
+    const previousPeriodSales = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { 
+            $gte: previousStartDate,
+            $lt: startDate
+          },
+          status: { $ne: 'cancelled' }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalSales: { $sum: '$totalAmount' }
+        }
+      }
+    ]);
+
+    const currentPeriodSales = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startDate },
+          status: { $ne: 'cancelled' }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalSales: { $sum: '$totalAmount' }
+        }
+      }
+    ]);
+
+    const previousTotal = previousPeriodSales[0]?.totalSales || 0;
+    const currentTotal = currentPeriodSales[0]?.totalSales || 0;
+    const salesGrowth = previousTotal === 0 ? 100 : ((currentTotal - previousTotal) / previousTotal) * 100;
 
     res.status(200).json({
       success: true,
@@ -232,7 +533,7 @@ router.get('/sales', async (req, res) => {
 });
 
 // Get inventory statistics
-router.get('/inventory', async (req, res) => {
+router.get('/inventory', protect, restrictTo('admin'), async (req, res) => {
   try {
     const inventoryStats = await Product.aggregate([
       {

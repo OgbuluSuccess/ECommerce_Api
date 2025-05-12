@@ -1,6 +1,12 @@
 const mongoose = require('mongoose');
 
 const productSchema = new mongoose.Schema({
+  sku: {
+    type: String,
+    required: [true, 'Please provide product SKU'],
+    unique: true,
+    trim: true
+  },
   name: {
     type: String,
     required: [true, 'Please provide product name'],
@@ -16,9 +22,9 @@ const productSchema = new mongoose.Schema({
     min: [0, 'Price cannot be negative']
   },
   category: {
-    type: String,
-    required: [true, 'Please provide product category'],
-    enum: ['Electronics', 'Clothing', 'Books', 'Home & Kitchen', 'Sports', 'Others']
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category',
+    required: [true, 'Please provide product category']
   },
   stock: {
     type: Number,
@@ -39,6 +45,37 @@ const productSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Please provide product brand']
   },
+  variants: [{
+    name: String,
+    sku: String,
+    price: Number,
+    stock: Number,
+    attributes: {
+      type: Map,
+      of: String
+    }
+  }],
+  specifications: {
+    type: Map,
+    of: String
+  },
+  tags: [String],
+  status: {
+    type: String,
+    enum: ['draft', 'active', 'inactive', 'discontinued'],
+    default: 'draft'
+  },
+  salePrice: {
+    type: Number,
+    validate: {
+      validator: function(value) {
+        return !value || value < this.price;
+      },
+      message: 'Sale price must be less than regular price'
+    }
+  },
+  saleStartDate: Date,
+  saleEndDate: Date,
   ratings: [{
     user: {
       type: mongoose.Schema.Types.ObjectId,

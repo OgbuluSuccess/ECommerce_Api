@@ -29,15 +29,22 @@ const { uploadFile, deleteFile } = require('../config/s3.config');
  *           description: Product description
  *         category:
  *           type: string
- *           description: Product category
+ *           description: Product category ID
  *         stock:
  *           type: number
  *           description: Available stock
  *         images:
  *           type: array
  *           items:
- *             type: string
- *           description: Product images URLs
+ *             type: object
+ *             properties:
+ *               url:
+ *                 type: string
+ *                 description: Image URL
+ *               key:
+ *                 type: string
+ *                 description: S3 key for the image
+ *           description: Product images
  *         ratings:
  *           type: array
  *           items:
@@ -45,15 +52,21 @@ const { uploadFile, deleteFile } = require('../config/s3.config');
  *             properties:
  *               user:
  *                 type: string
+ *                 description: User ID who rated the product
  *               rating:
  *                 type: number
+ *                 minimum: 1
+ *                 maximum: 5
+ *                 description: Rating value (1-5)
  *               review:
  *                 type: string
+ *                 description: Review text
+ *           description: Product ratings and reviews
  */
 
 /**
  * @swagger
- * /products:
+ * /api/products:
  *   get:
  *     summary: Get all products
  *     tags: [Products]
@@ -73,6 +86,21 @@ const { uploadFile, deleteFile } = require('../config/s3.config');
  *         schema:
  *           type: string
  *         description: Sort criteria
+ *       - in: query
+ *         name: category
+ *         schema:
+ *           type: string
+ *         description: Filter by category ID
+ *       - in: query
+ *         name: minPrice
+ *         schema:
+ *           type: number
+ *         description: Minimum price filter
+ *       - in: query
+ *         name: maxPrice
+ *         schema:
+ *           type: number
+ *         description: Maximum price filter
  *     responses:
  *       200:
  *         description: List of products
@@ -85,42 +113,172 @@ const { uploadFile, deleteFile } = require('../config/s3.config');
  *                   type: boolean
  *                 results:
  *                   type: integer
+ *                 total:
+ *                   type: integer
+ *                   description: Total number of products matching the criteria
  *                 data:
  *                   type: array
  *                   items:
  *                     $ref: '#/components/schemas/Product'
+ *   post:
+ *     summary: Create a new product
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - price
+ *               - description
+ *               - category
+ *               - stock
+ *             properties:
+ *               name:
+ *                 type: string
+ *               price:
+ *                 type: number
+ *               description:
+ *                 type: string
+ *               category:
+ *                 type: string
+ *               stock:
+ *                 type: number
+ *               images:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *     responses:
+ *       201:
+ *         description: Product created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   $ref: '#/components/schemas/Product'
+ *       401:
+ *         description: Not authorized
+ *       403:
+ *         description: Admin access required
  */
 
-// Get all products with filtering, sorting, and pagination
+// Get all products with advanced filtering, sorting, and pagination
 router.get('/', async (req, res) => {
   try {
-    const queryObj = { ...req.query };
-    const excludedFields = ['page', 'sort', 'limit', 'fields'];
-    excludedFields.forEach(field => delete queryObj[field]);
+    const {
+      page = 1,
+      limit = 10,
+      sort = '-createdAt',
+      fields,
+      search,
+      category,
+      minPrice,
+      maxPrice,
+      brand,
+      status,
+      featured,
+      minRating,
+      tags,
+      inStock
+    } = req.query;
 
-    // Advanced filtering
-    let queryStr = JSON.stringify(queryObj);
-    queryStr = queryStr.replace(/\b(gte|gt|lte|lt)\b/g, match => `$${match}`);
+    const pipeline = [];
 
-    let query = Product.find(JSON.parse(queryStr));
-
-    // Sorting
-    if (req.query.sort) {
-      const sortBy = req.query.sort.split(',').join(' ');
-      query = query.sort(sortBy);
-    } else {
-      query = query.sort('-createdAt');
+    // Search by name or description
+    if (search) {
+      pipeline.push({
+        $match: {
+          $or: [
+            { name: { $regex: search, $options: 'i' } },
+            { description: { $regex: search, $options: 'i' } },
+            { tags: { $in: [new RegExp(search, 'i')] } }
+          ]
+        }
+      });
     }
 
-    // Pagination
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 10;
-    const skip = (page - 1) * limit;
-    query = query.skip(skip).limit(limit);
+    // Category filter
+    if (category) {
+      pipeline.push({ $match: { category: mongoose.Types.ObjectId(category) } });
+    }
 
-    // Execute query
-    const products = await query;
-    const total = await Product.countDocuments(JSON.parse(queryStr));
+    // Price range filter
+    if (minPrice || maxPrice) {
+      const priceFilter = {};
+      if (minPrice) priceFilter.$gte = Number(minPrice);
+      if (maxPrice) priceFilter.$lte = Number(maxPrice);
+      pipeline.push({ $match: { price: priceFilter } });
+    }
+
+    // Brand filter
+    if (brand) {
+      pipeline.push({ $match: { brand: { $regex: brand, $options: 'i' } } });
+    }
+
+    // Status filter
+    if (status) {
+      pipeline.push({ $match: { status } });
+    }
+
+    // Featured filter
+    if (featured) {
+      pipeline.push({ $match: { featured: featured === 'true' } });
+    }
+
+    // Rating filter
+    if (minRating) {
+      pipeline.push({ $match: { averageRating: { $gte: Number(minRating) } } });
+    }
+
+    // Tags filter
+    if (tags) {
+      const tagArray = tags.split(',');
+      pipeline.push({ $match: { tags: { $in: tagArray } } });
+    }
+
+    // Stock filter
+    if (inStock === 'true') {
+      pipeline.push({ $match: { stock: { $gt: 0 } } });
+    }
+
+    // Get total count before pagination
+    const countPipeline = [...pipeline];
+    countPipeline.push({ $count: 'total' });
+    const [countResult] = await Product.aggregate(countPipeline);
+    const total = countResult ? countResult.total : 0;
+
+    // Sorting
+    const sortFields = sort.split(',').reduce((acc, field) => {
+      const order = field.startsWith('-') ? -1 : 1;
+      const fieldName = field.startsWith('-') ? field.slice(1) : field;
+      acc[fieldName] = order;
+      return acc;
+    }, {});
+    pipeline.push({ $sort: sortFields });
+
+    // Pagination
+    const skip = (Number(page) - 1) * Number(limit);
+    pipeline.push({ $skip: skip }, { $limit: Number(limit) });
+
+    // Field selection
+    if (fields) {
+      const fieldToInclude = fields.split(',').reduce((acc, field) => {
+        acc[field] = 1;
+        return acc;
+      }, {});
+      pipeline.push({ $project: fieldToInclude });
+    }
+
+    const products = await Product.aggregate(pipeline);
 
     res.status(200).json({
       success: true,
@@ -136,7 +294,120 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get single product
+/**
+ * @swagger
+ * /api/products/{id}:
+ *   get:
+ *     summary: Get a product by ID
+ *     tags: [Products]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Product ID
+ *     responses:
+ *       200:
+ *         description: Product details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   $ref: '#/components/schemas/Product'
+ *       404:
+ *         description: Product not found
+ */
+/**
+ * @swagger
+ * /api/products/{id}:
+ *   patch:
+ *     summary: Update a product
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Product ID
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               price:
+ *                 type: number
+ *               description:
+ *                 type: string
+ *               category:
+ *                 type: string
+ *               stock:
+ *                 type: number
+ *               images:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *     responses:
+ *       200:
+ *         description: Product updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   $ref: '#/components/schemas/Product'
+ *       401:
+ *         description: Not authorized
+ *       403:
+ *         description: Admin access required
+ *       404:
+ *         description: Product not found
+ *   delete:
+ *     summary: Delete a product
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Product ID
+ *     responses:
+ *       200:
+ *         description: Product deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *       401:
+ *         description: Not authorized
+ *       403:
+ *         description: Admin access required
+ *       404:
+ *         description: Product not found
+ */
+
 router.get('/:id', async (req, res) => {
   try {
     const product = await Product.findById(req.params.id).populate('ratings.user', 'name');
@@ -159,7 +430,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Create product (Admin only)
+
 router.post('/', protect, restrictTo('admin'), upload.array('images', 5), async (req, res) => {
   try {
     const productData = req.body;
@@ -187,7 +458,42 @@ router.post('/', protect, restrictTo('admin'), upload.array('images', 5), async 
   }
 });
 
-// Update product (Admin only)
+/**
+ * @swagger
+ * /products/{id}:
+ *   patch:
+ *     summary: Update a product
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               price:
+ *                 type: number
+ *               description:
+ *                 type: string
+ *               category:
+ *                 type: string
+ *               stock:
+ *                 type: number
+ *     responses:
+ *       200:
+ *         description: Product updated successfully
+ *       404:
+ *         description: Product not found
+ */
 router.patch('/:id', protect, restrictTo('admin'), async (req, res) => {
   try {
     const product = await Product.findByIdAndUpdate(
