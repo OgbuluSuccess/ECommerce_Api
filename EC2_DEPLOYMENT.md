@@ -29,12 +29,14 @@
 ## Step 3: Install Required Software
 ```bash
 # Update package list
-sudo apt update
-sudo apt upgrade -y
+sudo apt update && sudo apt upgrade -y
 
 # Install Node.js 18.x
 curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
 sudo apt install -y nodejs
+
+# Install build essentials (needed for some npm packages)
+sudo apt install -y build-essential
 
 # Install PM2 globally
 sudo npm install -y pm2 -g
@@ -53,8 +55,11 @@ sudo systemctl enable nginx
 mkdir ~/app
 cd ~/app
 
-# Clone your repository (replace with your repo URL)
-git clone your-repository-url .
+# Option 1: Transfer files from local machine (run this on your local machine)
+scp -i path/to/your-key.pem -r package.json src/* ubuntu@your-ec2-public-dns:~/app/
+
+# Option 2: Clone your repository (if your code is on GitHub/GitLab)
+# git clone your-repository-url .
 
 # Install dependencies
 npm install
@@ -62,8 +67,8 @@ npm install
 # Create .env file
 cat > .env << EOL
 PORT=5000
-MONGODB_URI=your_mongodb_uri
-JWT_SECRET=your_jwt_secret
+MONGODB_URI=mongodb+srv://ecommerce:moEsWD9H8dXKzSMh@cluster0.k8n18mf.mongodb.net/ecommerce
+JWT_SECRET=JNJDEFENJFNKEFYEFJNEJFJVWHVWJsnfknknkwndwJNEJFNKENFJEFJENFJENBFJ
 JWT_EXPIRES_IN=7d
 NODE_ENV=production
 EOL
@@ -72,14 +77,15 @@ EOL
 ## Step 5: Configure Nginx as Reverse Proxy
 ```bash
 # Create Nginx configuration
-sudo nano /etc/nginx/sites-available/ecommerce-api
+sudo mkdir -p /etc/nginx/conf.d
+sudo nano /etc/nginx/conf.d/ecommerce-api.conf
 ```
 
 Add the following configuration:
 ```nginx
 server {
     listen 80;
-    server_name your_domain_or_ip;
+    server_name ec2-16-170-229-92.eu-north-1.compute.amazonaws.com 16.170.229.92;
 
     location / {
         proxy_pass http://localhost:5000;
@@ -92,9 +98,8 @@ server {
 }
 ```
 
-Enable the configuration:
+Test and apply the configuration:
 ```bash
-sudo ln -s /etc/nginx/sites-available/ecommerce-api /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl restart nginx
 ```
@@ -110,10 +115,7 @@ pm2 save
 ## Step 7: SSL Configuration (Optional)
 ```bash
 # Install Certbot
-sudo snap install core
-sudo snap refresh core
-sudo snap install --classic certbot
-sudo ln -s /snap/bin/certbot /usr/bin/certbot
+sudo dnf install -y certbot python3-certbot-nginx
 
 # Get SSL certificate
 sudo certbot --nginx -d your_domain
@@ -138,8 +140,11 @@ servers: [
 
 ## Security Best Practices
 1. Keep your system updated: `sudo apt update && sudo apt upgrade`
-2. Configure UFW firewall:
+2. Configure UFW (Uncomplicated Firewall):
    ```bash
+   sudo apt install -y ufw
+   sudo ufw default deny incoming
+   sudo ufw default allow outgoing
    sudo ufw allow ssh
    sudo ufw allow http
    sudo ufw allow https
