@@ -14,6 +14,10 @@ const options = {
         description: 'Development server',
       },
       {
+        url: 'http://16.170.229.92:5000/api',  
+        description: 'EC2 Development server',
+      },
+      {
         url: 'http://ecommerce-api-env.eba-xyz.eu-north-1.elasticbeanstalk.com/api',
         description: 'Production server',
       },
