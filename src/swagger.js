@@ -10,6 +10,10 @@ const options = {
     },
     servers: [
       {
+        url: 'http://api.icedeluxewears.com/api',
+        description: 'Production server',
+      },
+      {
         url: 'http://16.170.229.92:5000/api',
         description: 'EC2 Development server',
       },
@@ -17,10 +21,7 @@ const options = {
         url: 'http://localhost:5000/api',
         description: 'Local Development server',
       },
-      {
-        url: 'http://ecommerce-api-env.eba-xyz.eu-north-1.elasticbeanstalk.com/api',
-        description: 'Production server',
-      },
+      
     ],
     components: {
       securitySchemes: {
