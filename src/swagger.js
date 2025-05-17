@@ -10,7 +10,7 @@ const options = {
     },
     servers: [
       {
-        url: 'https://api.icedeluxewears.com',
+        url: 'https://api.icedeluxewears.com/api',
         description: 'Production server',
       },
       {
