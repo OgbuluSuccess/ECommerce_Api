@@ -10,13 +10,14 @@ const options = {
     },
     servers: [
       {
-        url: 'http://localhost:5000/api',
-        description: 'Local Development server',
-      },
-      {
         url: 'https://api.icedeluxewears.com',
         description: 'Production server',
       },
+      {
+        url: 'http://localhost:5000/api',
+        description: 'Local Development server',
+      },
+      
       {
         url: 'http://16.170.229.92:5000/api',
         description: 'EC2 Development server',
