@@ -171,6 +171,54 @@ const { uploadFile, deleteFile } = require('../config/s3.config');
  *         description: Admin access required
  */
 
+/**
+ * @swagger
+ * /api/products/all:
+ *   get:
+ *     summary: Get all products without filtering
+ *     tags: [Products]
+ *     responses:
+ *       200:
+ *         description: List of all products
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 count:
+ *                   type: integer
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Product'
+ */
+
+// Get all products without any filtering
+router.get('/all', getAllProducts);
+
+// The route below won't work as expected because Express router is already mounted at /api/products
+// To fix the duplicated prefix issue, we need to modify how the routes are mounted in index.js
+
+// Function to get all products
+async function getAllProducts(req, res) {
+  try {
+    const products = await Product.find().populate('category');
+    
+    res.status(200).json({
+      success: true,
+      count: products.length,
+      data: products
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+}
+
 // Get all products with advanced filtering, sorting, and pagination
 router.get('/', async (req, res) => {
   try {
@@ -430,11 +478,26 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-
 router.post('/', protect, restrictTo('admin'), upload.array('images', 5), async (req, res) => {
   try {
     const productData = req.body;
     productData.images = [];
+
+    // Add required fields if not provided
+    productData.createdBy = req.user.id; // Add the current user as creator
+    
+    // Generate SKU if not provided
+    if (!productData.sku) {
+      // Create a unique SKU based on product name and timestamp
+      const timestamp = Date.now().toString().slice(-6);
+      const namePrefix = productData.name ? productData.name.slice(0, 3).toUpperCase() : 'PRD';
+      productData.sku = `${namePrefix}-${timestamp}`;
+    }
+    
+    // Set default brand if not provided
+    if (!productData.brand) {
+      productData.brand = 'Ice Deluxe'; // Default brand name
+    }
 
     // Upload images to S3
     if (req.files && req.files.length > 0) {

@@ -22,6 +22,25 @@ app.use(express.json());
 app.use(cors());
 app.use(morgan('dev'));
 
+// Handle routes for production domain (api.icedeluxewears.com)
+// For local development, we'll explicitly set to non-production mode
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Log the current environment mode
+console.log(`Running in ${isProduction ? 'production' : 'development'} mode`);
+
+// In production, the domain already has 'api' in it, so we don't need the /api prefix
+const routePrefix = isProduction ? '' : '/api';
+
+// Middleware to normalize paths
+app.use((req, res, next) => {
+  // Handle legacy requests with duplicated /api prefix
+  if (req.path.startsWith('/api/api/')) {
+    req.url = req.url.replace('/api/api/', '/api/');
+  }
+  next();
+});
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -33,12 +52,12 @@ app.use(limiter);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/products', productRoutes);
-app.use('/api/cart', cartRoutes);
-app.use('/api/orders', orderRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/categories', categoryRoutes);
+app.use(`${routePrefix}/auth`, authRoutes);
+app.use(`${routePrefix}/products`, productRoutes);
+app.use(`${routePrefix}/cart`, cartRoutes);
+app.use(`${routePrefix}/orders`, orderRoutes);
+app.use(`${routePrefix}/admin`, adminRoutes);
+app.use(`${routePrefix}/categories`, categoryRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

@@ -13,11 +13,11 @@ const s3 = new AWS.S3();
 // Upload file to S3
 const uploadFile = async (file, key) => {
   const params = {
-    Bucket: process.env.AWS_S3_BUCKET,
+    Bucket: process.env.S3_BUCKET || process.env.AWS_S3_BUCKET,
     Key: key,
     Body: file.buffer,
     ContentType: file.mimetype,
-    ACL: 'public-read'
+    
   };
 
   try {
@@ -31,7 +31,7 @@ const uploadFile = async (file, key) => {
 // Delete file from S3
 const deleteFile = async (key) => {
   const params = {
-    Bucket: process.env.AWS_S3_BUCKET,
+    Bucket: process.env.S3_BUCKET || process.env.AWS_S3_BUCKET,
     Key: key
   };
 
