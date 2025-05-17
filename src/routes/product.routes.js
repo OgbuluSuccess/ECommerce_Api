@@ -198,8 +198,8 @@ const { uploadFile, deleteFile } = require('../config/s3.config');
 // Get all products without any filtering
 router.get('/all', getAllProducts);
 
-// The route below won't work as expected because Express router is already mounted at /api/products
-// To fix the duplicated prefix issue, we need to modify how the routes are mounted in index.js
+// Also handle the case with the duplicated /api prefix for this specific endpoint
+router.get('/api/products/all', getAllProducts);
 
 // Function to get all products
 async function getAllProducts(req, res) {
