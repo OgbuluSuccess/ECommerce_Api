@@ -265,7 +265,7 @@ router.patch('/:id', protect, restrictTo('admin'), async (req, res) => {
 
 /**
  * @swagger
- * /api/categories/{id}:
+ * /categories/{id}:
  *   delete:
  *     summary: Delete a category
  *     tags: [Categories]

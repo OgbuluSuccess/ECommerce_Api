@@ -66,7 +66,7 @@ const { uploadFile, deleteFile } = require('../config/s3.config');
 
 /**
  * @swagger
- * /api/products:
+ * /products:
  *   get:
  *     summary: Get all products
  *     tags: [Products]
@@ -173,7 +173,7 @@ const { uploadFile, deleteFile } = require('../config/s3.config');
 
 /**
  * @swagger
- * /api/products/all:
+ * /products/all:
  *   get:
  *     summary: Get all products without filtering
  *     tags: [Products]
@@ -344,7 +344,7 @@ router.get('/', async (req, res) => {
 
 /**
  * @swagger
- * /api/products/{id}:
+ * /products/{id}:
  *   get:
  *     summary: Get a product by ID
  *     tags: [Products]
@@ -372,7 +372,7 @@ router.get('/', async (req, res) => {
  */
 /**
  * @swagger
- * /api/products/{id}:
+ * /products/{id}:
  *   patch:
  *     summary: Update a product
  *     tags: [Products]
