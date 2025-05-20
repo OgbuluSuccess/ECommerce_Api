@@ -3,6 +3,7 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const User = require('../models/user.model');
 const { protect } = require('../middleware/auth.middleware');
+const { sendWelcomeEmail } = require('../utils/email.utils');
 
 /**
  * @swagger
@@ -91,6 +92,15 @@ router.post('/register', async (req, res) => {
 
     // Remove password from output
     user.password = undefined;
+
+    // Send welcome email
+    try {
+      await sendWelcomeEmail(user);
+      console.log(`Welcome email sent to ${user.email}`);
+    } catch (emailError) {
+      console.error('Error sending welcome email:', emailError);
+      // Continue with registration even if email fails
+    }
 
     res.status(201).json({
       success: true,

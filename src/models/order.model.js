@@ -46,7 +46,17 @@ const orderSchema = new mongoose.Schema({
   paymentMethod: {
     type: String,
     required: true,
-    enum: ['credit_card', 'debit_card', 'paypal']
+    enum: ['credit_card', 'debit_card', 'paypal', 'paystack']
+  },
+  paymentDetails: {
+    reference: String,
+    authorization_url: String,
+    access_code: String,
+    transaction_id: String,
+    payment_provider: {
+      type: String,
+      default: 'paystack'
+    }
   },
   orderNumber: {
     type: String,

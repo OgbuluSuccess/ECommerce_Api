@@ -3,7 +3,11 @@ const router = express.Router();
 const Product = require('../models/product.model');
 const { protect, restrictTo } = require('../middleware/auth.middleware');
 const upload = require('../middleware/upload.middleware');
-const { uploadFile, deleteFile } = require('../config/s3.config');
+const { uploadFile, deleteFile, getSignedUrl } = require('../config/s3.config');
+const transformS3Urls = require('../middleware/s3-url.middleware');
+
+// Apply S3 URL transformation middleware to all routes
+router.use(transformS3Urls);
 
 /**
  * @swagger
@@ -206,6 +210,25 @@ async function getAllProducts(req, res) {
   try {
     const products = await Product.find().populate('category');
     
+    // Process product images to generate pre-signed URLs
+    for (const product of products) {
+      if (product.images && product.images.length > 0) {
+        for (const image of product.images) {
+          if (image.key) {
+            try {
+              // Generate a pre-signed URL with 1 hour expiration
+              const signedUrl = await getSignedUrl(image.key, 3600);
+              // Replace the original URL with the signed URL
+              image.url = signedUrl;
+              console.log(`Generated signed URL for ${image.key}`);
+            } catch (error) {
+              console.error(`Error generating signed URL for ${image.key}:`, error);
+            }
+          }
+        }
+      }
+    }
+    
     res.status(200).json({
       success: true,
       count: products.length,
@@ -327,6 +350,25 @@ router.get('/', async (req, res) => {
     }
 
     const products = await Product.aggregate(pipeline);
+
+    // Process product images to generate pre-signed URLs
+    for (const product of products) {
+      if (product.images && product.images.length > 0) {
+        for (const image of product.images) {
+          if (image.key) {
+            try {
+              // Generate a pre-signed URL with 1 hour expiration
+              const signedUrl = await getSignedUrl(image.key, 3600);
+              // Replace the original URL with the signed URL
+              image.url = signedUrl;
+              console.log(`Generated signed URL for ${image.key}`);
+            } catch (error) {
+              console.error(`Error generating signed URL for ${image.key}:`, error);
+            }
+          }
+        }
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -466,6 +508,23 @@ router.get('/:id', async (req, res) => {
       });
     }
 
+    // Process product images to generate pre-signed URLs
+    if (product.images && product.images.length > 0) {
+      for (const image of product.images) {
+        if (image.key) {
+          try {
+            // Generate a pre-signed URL with 1 hour expiration
+            const signedUrl = await getSignedUrl(image.key, 3600);
+            // Replace the original URL with the signed URL
+            image.url = signedUrl;
+            console.log(`Generated signed URL for ${image.key}`);
+          } catch (error) {
+            console.error(`Error generating signed URL for ${image.key}:`, error);
+          }
+        }
+      }
+    }
+
     res.status(200).json({
       success: true,
       data: product
@@ -509,6 +568,24 @@ router.post('/', protect, restrictTo('admin'), upload.array('images', 5), async 
     }
 
     const product = await Product.create(productData);
+    
+    // Process product images to generate pre-signed URLs
+    if (product.images && product.images.length > 0) {
+      for (const image of product.images) {
+        if (image.key) {
+          try {
+            // Generate a pre-signed URL with 1 hour expiration
+            const signedUrl = await getSignedUrl(image.key, 3600);
+            // Replace the original URL with the signed URL
+            image.url = signedUrl;
+            console.log(`Generated signed URL for ${image.key}`);
+          } catch (error) {
+            console.error(`Error generating signed URL for ${image.key}:`, error);
+          }
+        }
+      }
+    }
+    
     res.status(201).json({
       success: true,
       data: product

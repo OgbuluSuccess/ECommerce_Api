@@ -17,7 +17,8 @@ const uploadFile = async (file, key) => {
     Key: key,
     Body: file.buffer,
     ContentType: file.mimetype,
-    
+    // Make objects publicly readable
+    ACL: 'public-read'
   };
 
   try {
@@ -25,6 +26,26 @@ const uploadFile = async (file, key) => {
     return result.Location;
   } catch (error) {
     throw new Error(`Error uploading file to S3: ${error.message}`);
+  }
+};
+
+// Generate a pre-signed URL for an S3 object
+const getSignedUrl = async (key, expiresIn = 3600) => {
+  // Ensure we have a bucket name
+  const bucketName = process.env.S3_BUCKET || process.env.AWS_S3_BUCKET || 'banksstorage';
+  
+  const params = {
+    Bucket: bucketName,
+    Key: key,
+    Expires: expiresIn // URL expiration time in seconds (default: 1 hour)
+  };
+
+  try {
+    // Use the synchronous version since AWS SDK v2's getSignedUrlPromise can be inconsistent
+    const url = s3.getSignedUrl('getObject', params);
+    return url;
+  } catch (error) {
+    throw new Error(`Error generating signed URL: ${error.message}`);
   }
 };
 
@@ -44,5 +65,6 @@ const deleteFile = async (key) => {
 
 module.exports = {
   uploadFile,
-  deleteFile
+  deleteFile,
+  getSignedUrl
 };
