@@ -9,6 +9,7 @@ const options = {
       description: 'API documentation for the E-commerce platform',
     },
     servers: [
+      
       {
         url: 'https://api.icedeluxewears.com',
         description: 'Production server',

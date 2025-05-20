@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const Product = require('../models/product.model');
 const { protect, restrictTo } = require('../middleware/auth.middleware');
 const upload = require('../middleware/upload.middleware');
@@ -279,7 +280,7 @@ router.get('/', async (req, res) => {
 
     // Category filter
     if (category) {
-      pipeline.push({ $match: { category: mongoose.Types.ObjectId(category) } });
+      pipeline.push({ $match: { category: new mongoose.Types.ObjectId(category) } });
     }
 
     // Price range filter
