@@ -648,6 +648,22 @@ router.patch('/:id', protect, restrictTo('admin'), upload.array('images', 5), as
 
     const productData = req.body;
     
+    // Validate and clean up category field
+    if (productData.category) {
+      // If category is 'string' or empty, remove it from the update data
+      if (productData.category === 'string' || productData.category === '') {
+        delete productData.category;
+      } else {
+        // Try to validate if it's a valid ObjectId
+        try {
+          new mongoose.Types.ObjectId(productData.category);
+        } catch (error) {
+          // If not a valid ObjectId, remove it from the update data
+          delete productData.category;
+        }
+      }
+    }
+    
     // Handle image uploads if any
     if (req.files && req.files.length > 0) {
       // Initialize images array if it doesn't exist in the update data
@@ -661,6 +677,11 @@ router.patch('/:id', protect, restrictTo('admin'), upload.array('images', 5), as
         const imageUrl = await uploadFile(file, key);
         productData.images.push({ url: imageUrl, key: key });
       }
+    }
+    
+    // Handle images field if it's a string literal 'string'
+    if (productData.images === 'string') {
+      delete productData.images;
     }
 
     // Update the product
