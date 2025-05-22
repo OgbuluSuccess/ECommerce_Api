@@ -635,19 +635,55 @@ router.post('/', protect, restrictTo('admin'), upload.array('images', 5), async 
  *       404:
  *         description: Product not found
  */
-router.patch('/:id', protect, restrictTo('admin'), async (req, res) => {
+router.patch('/:id', protect, restrictTo('admin'), upload.array('images', 5), async (req, res) => {
   try {
-    const product = await Product.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true, runValidators: true }
-    );
-
-    if (!product) {
+    // First find the existing product
+    const existingProduct = await Product.findById(req.params.id);
+    if (!existingProduct) {
       return res.status(404).json({
         success: false,
         message: 'Product not found'
       });
+    }
+
+    const productData = req.body;
+    
+    // Handle image uploads if any
+    if (req.files && req.files.length > 0) {
+      // Initialize images array if it doesn't exist in the update data
+      if (!productData.images) {
+        productData.images = [...existingProduct.images]; // Keep existing images
+      }
+      
+      // Upload new images to S3
+      for (const file of req.files) {
+        const key = `products/${Date.now()}-${file.originalname}`;
+        const imageUrl = await uploadFile(file, key);
+        productData.images.push({ url: imageUrl, key: key });
+      }
+    }
+
+    // Update the product
+    const product = await Product.findByIdAndUpdate(
+      req.params.id,
+      productData,
+      { new: true, runValidators: true }
+    );
+
+    // Process product images to generate pre-signed URLs
+    if (product.images && product.images.length > 0) {
+      for (const image of product.images) {
+        if (image.key) {
+          try {
+            // Generate a pre-signed URL with 1 hour expiration
+            const signedUrl = await getSignedUrl(image.key, 3600);
+            // Replace the original URL with the signed URL
+            image.url = signedUrl;
+          } catch (error) {
+            console.error(`Error generating signed URL for ${image.key}:`, error);
+          }
+        }
+      }
     }
 
     res.status(200).json({

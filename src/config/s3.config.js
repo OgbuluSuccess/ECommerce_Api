@@ -16,9 +16,8 @@ const uploadFile = async (file, key) => {
     Bucket: process.env.S3_BUCKET || process.env.AWS_S3_BUCKET,
     Key: key,
     Body: file.buffer,
-    ContentType: file.mimetype,
-    // Make objects publicly readable
-    ACL: 'public-read'
+    ContentType: file.mimetype
+    // Removed ACL: 'public-read' to comply with bucket settings
   };
 
   try {
