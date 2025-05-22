@@ -305,7 +305,8 @@ router.delete('/:id', protect, restrictTo('admin'), async (req, res) => {
       });
     }
 
-    await category.remove();
+    // Using deleteOne instead of the deprecated remove() method
+    await Category.deleteOne({ _id: category._id });
 
     res.status(200).json({
       success: true,
