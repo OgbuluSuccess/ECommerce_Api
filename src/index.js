@@ -17,60 +17,91 @@ const categoryRoutes = require('./routes/category.routes');
 
 const app = express();
 
-// Middleware
+// Trust proxy (important for AWS/Nginx setup)
+app.set('trust proxy', 1);
+
+// Basic middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Configure CORS - this is important for mobile browsers
+// Simplified CORS configuration
 app.use(cors({
-  origin: '*',  // Allow all origins
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    // Allow all origins in development/testing
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    
+    // In production, you might want to restrict origins
+    // For now, allowing all for debugging
+    return callback(null, true);
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  allowedHeaders: [
+    'Origin',
+    'X-Requested-With', 
+    'Content-Type', 
+    'Accept', 
+    'Authorization',
+    'Cache-Control',
+    'Pragma'
+  ],
   credentials: true,
-  optionsSuccessStatus: 200,
-  maxAge: 86400  // Cache preflight requests for 24 hours
+  optionsSuccessStatus: 200
 }));
 
-// Add response headers for better mobile compatibility
+// Explicit preflight handler
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control, Pragma');
+  res.header('Access-Control-Max-Age', '86400');
+  res.sendStatus(200);
+});
+
+// Security and compatibility headers
 app.use((req, res, next) => {
+  // CORS headers (backup)
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  res.header('Access-Control-Max-Age', '86400');
-  // Handle preflight requests
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  
+  // Mobile browser compatibility
+  res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.header('Pragma', 'no-cache');
+  res.header('Expires', '0');
+  
+  // Security headers
+  res.header('X-Content-Type-Options', 'nosniff');
+  res.header('X-Frame-Options', 'DENY');
+  res.header('X-XSS-Protection', '1; mode=block');
+  
   next();
 });
 
-app.use(morgan('dev'));
+// Request logging
+app.use(morgan('combined'));
 
-// Handle routes for production domain (api.icedeluxewears.com)
-// For local development, we'll explicitly set to non-production mode
+// Environment detection
 const isProduction = process.env.NODE_ENV === 'production';
-
-// Log the current environment mode
 console.log(`Running in ${isProduction ? 'production' : 'development'} mode`);
 
-// In production, the domain already has 'api' in it, so we don't need the /api prefix
-const routePrefix = isProduction ? '' : '/api';
+// Route prefix logic (simplified)
+const routePrefix = '/api';
 
-// Middleware to normalize paths
-app.use((req, res, next) => {
-  // Handle legacy requests with duplicated /api prefix
-  if (req.path.startsWith('/api/api/')) {
-    req.url = req.url.replace('/api/api/', '/api/');
-  }
-  next();
-});
-
-// Rate limiting - but make it less restrictive
+// More lenient rate limiting for debugging
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200, // increased from 100 to 200 requests per windowMs
+  max: 1000, // Very high limit for debugging
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    // Skip rate limiting for health checks and options requests
+    return req.path === '/health' || req.method === 'OPTIONS';
+  },
   message: {
     success: false,
     message: 'Too many requests, please try again later.'
@@ -78,19 +109,37 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// Swagger Documentation
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-
-// Health check endpoint
+// Health check endpoint (must be before other routes)
 app.get('/health', (req, res) => {
+  console.log(`Health check from: ${req.ip} - User-Agent: ${req.get('User-Agent')}`);
   res.status(200).json({
     success: true,
     message: 'API is running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    nodeVersion: process.version
   });
 });
 
-// Routes
+// Root endpoint
+app.get('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Ice Deluxe Wears API',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      auth: '/api/auth',
+      products: '/api/products',
+      cart: '/api/cart',
+      orders: '/api/orders',
+      admin: '/api/admin',
+      categories: '/api/categories'
+    }
+  });
+});
+
+// API Routes
 app.use(`${routePrefix}/auth`, authRoutes);
 app.use(`${routePrefix}/products`, productRoutes);
 app.use(`${routePrefix}/cart`, cartRoutes);
@@ -98,39 +147,100 @@ app.use(`${routePrefix}/orders`, orderRoutes);
 app.use(`${routePrefix}/admin`, adminRoutes);
 app.use(`${routePrefix}/categories`, categoryRoutes);
 
-// 404 handler
+// Swagger Documentation
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+// 404 handler with detailed logging
 app.use((req, res, next) => {
+  console.log(`404 - Route not found: ${req.method} ${req.originalUrl} from ${req.ip}`);
+  console.log(`User-Agent: ${req.get('User-Agent')}`);
+  
   res.status(404).json({
     success: false,
-    message: 'Route not found'
+    message: 'Route not found',
+    requestedUrl: req.originalUrl,
+    method: req.method
   });
 });
 
-// Error handling middleware
+// Enhanced error handling
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('Error occurred:');
+  console.error('URL:', req.originalUrl);
+  console.error('Method:', req.method);
+  console.error('IP:', req.ip);
+  console.error('User-Agent:', req.get('User-Agent'));
+  console.error('Error:', err.stack);
+  
   res.status(err.status || 500).json({
     success: false,
-    message: err.message || 'Internal server error'
+    message: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message,
+    ...(process.env.NODE_ENV !== 'production' && { stack: err.stack })
   });
 });
 
-// Database connection with retry logic
+// Enhanced MongoDB connection with better error handling
+mongoose.set('strictQuery', false);
+
 const connectWithRetry = () => {
+  const mongoOptions = {
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+    family: 4, // Use IPv4, skip trying IPv6
+    maxPoolSize: 10,
+    minPoolSize: 5,
+    bufferCommands: false,
+    bufferMaxEntries: 0,
+  };
+
   console.log('Attempting to connect to MongoDB...');
-  mongoose.connect(process.env.MONGODB_URI)
-    .then(() => console.log('Connected to MongoDB'))
+  
+  mongoose.connect(process.env.MONGODB_URI, mongoOptions)
+    .then(() => {
+      console.log('✅ Connected to MongoDB successfully');
+    })
     .catch(err => {
-      console.error('MongoDB connection error:', err);
-      console.log('Retrying connection in 5 seconds...');
+      console.error('❌ MongoDB connection error:', err.message);
+      console.log('🔄 Retrying connection in 5 seconds...');
       setTimeout(connectWithRetry, 5000);
     });
 };
 
+// MongoDB event listeners
+mongoose.connection.on('connected', () => {
+  console.log('Mongoose connected to MongoDB');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('Mongoose connection error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('Mongoose disconnected from MongoDB');
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('Received SIGINT, shutting down gracefully...');
+  await mongoose.connection.close();
+  process.exit(0);
+});
+
 connectWithRetry();
 
-// Start server
+// Start server with better error handling
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is running on port ${PORT}`);
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server is running on port ${PORT}`);
+  console.log(`📱 Health check: http://localhost:${PORT}/health`);
+  console.log(`📚 API Docs: http://localhost:${PORT}/api-docs`);
 });
+
+// Handle server errors
+server.on('error', (err) => {
+  console.error('Server error:', err);
+});
+
+// Keep-alive configuration
+server.keepAliveTimeout = 120000;
+server.headersTimeout = 120000;
