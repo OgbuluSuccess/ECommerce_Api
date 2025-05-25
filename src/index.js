@@ -30,21 +30,28 @@ app.use(cors({
     // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) return callback(null, true);
     
-    // Allow all origins in development/testing
-    if (process.env.NODE_ENV !== 'production') {
-      return callback(null, true);
+    // Allow specific origins in production
+    const allowedOrigins = [
+      'https://ice-deluxe-wears-git-master-yagazierems-projects.vercel.app',
+      // Add other allowed origins if needed
+    ];
+    
+    if (process.env.NODE_ENV === 'production') {
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error('Not allowed by CORS'));
     }
     
-    // In production, you might want to restrict origins
-    // For now, allowing all for debugging
+    // Allow all origins in development
     return callback(null, true);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: [
     'Origin',
-    'X-Requested-With', 
-    'Content-Type', 
-    'Accept', 
+    'X-Requested-With',
+    'Content-Type',
+    'Accept',
     'Authorization',
     'Cache-Control',
     'Pragma'
@@ -53,32 +60,14 @@ app.use(cors({
   optionsSuccessStatus: 200
 }));
 
-// Explicit preflight handler
-app.options('*', (req, res) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control, Pragma');
-  res.header('Access-Control-Max-Age', '86400');
-  res.sendStatus(200);
-});
-
 // Security and compatibility headers
 app.use((req, res, next) => {
-  // CORS headers (backup)
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  
-  // Mobile browser compatibility
   res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.header('Pragma', 'no-cache');
   res.header('Expires', '0');
-  
-  // Security headers
   res.header('X-Content-Type-Options', 'nosniff');
   res.header('X-Frame-Options', 'DENY');
   res.header('X-XSS-Protection', '1; mode=block');
-  
   next();
 });
 
@@ -109,7 +98,7 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// Health check endpoint (must be before other routes)
+// Health check endpoint
 app.get('/health', (req, res) => {
   console.log(`Health check from: ${req.ip} - User-Agent: ${req.get('User-Agent')}`);
   res.status(200).json({
