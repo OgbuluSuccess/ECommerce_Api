@@ -44,7 +44,8 @@ app.use(cors({
       'http://127.0.0.1:3000',
       'http://127.0.0.1:5173',
       'http://localhost:4173',  // Vite preview port
-      'http://127.0.0.1:4173'   // Vite preview port alternative
+      'http://127.0.0.1:4173',
+      'http://localhost:23813'   // Vite preview port alternative
     ];
     
     // In development, allow all origins
