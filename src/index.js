@@ -39,19 +39,21 @@ app.use(cors({
       'https://ice-deluxe-wears-git-master-yagazierems-projects.vercel.app',
       'https://icedeluxewears.com',
       'https://www.icedeluxewears.com',
+      // Keep your existing localhost entries
       'http://localhost:3000',
       'http://localhost:5173',
       'http://127.0.0.1:3000',
       'http://127.0.0.1:5173',
-      'http://localhost:4173',  // Vite preview port
+      'http://localhost:4173',
       'http://127.0.0.1:4173',
-      'http://localhost:23813'   // Vite preview port alternative
+      'http://localhost:23813'
     ];
     
-    // In development, allow all origins
+    // In development, allow all origins with localhost or 127.0.0.1
     if (process.env.NODE_ENV !== 'production') {
-      // For local development, we'll allow the request regardless of origin
-      return callback(null, true);
+      if (origin && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+        return callback(null, true);
+      }
     }
     
     // In production, only allow specific origins
