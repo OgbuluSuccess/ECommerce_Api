@@ -174,8 +174,8 @@ async function connectAndStartServer() {
     family: 4, // Use IPv4, skip trying IPv6
     maxPoolSize: 10,
     minPoolSize: 5,
-    bufferCommands: false,
-    bufferMaxEntries: 0,
+    bufferCommands: false
+    // Removed bufferMaxEntries: 0 as it's not supported in newer MongoDB driver versions
   };
 
   console.log('Attempting to connect to MongoDB...');
