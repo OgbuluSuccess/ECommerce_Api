@@ -276,35 +276,38 @@ router.delete('/users/:id', protect, restrictTo('admin'), async (req, res) => {
 // Get dashboard statistics
 router.get('/dashboard', protect, restrictTo('admin'), async (req, res) => {
   try {
-    // Basic statistics
-    const totalUsers = await User.countDocuments({ role: 'user' });
-    const totalProducts = await Product.countDocuments();
-    const totalOrders = await Order.countDocuments();
-
-    // User growth analytics
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    // Get date range for comparison (current month and previous month)
+    const now = new Date();
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     
-    const newUsers = await User.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: thirtyDaysAgo },
-          role: 'user'
-        }
-      },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
+    // Count total users
+    const totalUsers = await User.countDocuments();
+    const previousMonthUsers = await User.countDocuments({ createdAt: { $lt: currentMonthStart } });
+    const userGrowth = totalUsers > 0 && previousMonthUsers > 0 ? 
+      Math.round(((totalUsers - previousMonthUsers) / previousMonthUsers) * 100) : 0;
 
-    // Revenue analytics
-    const orders = await Order.find({ status: { $ne: 'cancelled' } });
+    // Count total products
+    const totalProducts = await Product.countDocuments();
+    
+    // Count total orders
+    const totalOrders = await Order.countDocuments();
+    const previousMonthOrders = await Order.countDocuments({ createdAt: { $lt: currentMonthStart } });
+    const orderGrowth = totalOrders > 0 && previousMonthOrders > 0 ? 
+      Math.round(((totalOrders - previousMonthOrders) / previousMonthOrders) * 100) : 0;
+
+    // Calculate total revenue
+    const orders = await Order.find({ status: { $in: ['completed', 'delivered'] } });
     const totalRevenue = orders.reduce((acc, order) => acc + order.totalAmount, 0);
+    
+    const previousMonthRevenue = orders
+      .filter(order => order.createdAt < currentMonthStart && order.createdAt >= previousMonthStart)
+      .reduce((acc, order) => acc + order.totalAmount, 0);
+      
+    const revenueGrowth = totalRevenue > 0 && previousMonthRevenue > 0 ? 
+      Math.round(((totalRevenue - previousMonthRevenue) / previousMonthRevenue) * 100) : 0;
 
+    // Get recent orders
     // Order analytics
     const orderStatusCount = await Order.aggregate([
       {
@@ -337,6 +340,32 @@ router.get('/dashboard', protect, restrictTo('admin'), async (req, res) => {
         }
       }
     ]);
+    
+    // Get new users (last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    let newUsers = [];
+    try {
+      newUsers = await User.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: thirtyDaysAgo },
+            role: 'user'
+          }
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { _id: 1 } }
+      ]);
+    } catch (err) {
+      console.error('Error getting new users:', err);
+      newUsers = [];
+    }
 
     res.status(200).json({
       success: true,

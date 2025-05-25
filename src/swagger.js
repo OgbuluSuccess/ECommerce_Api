@@ -15,12 +15,12 @@ const options = {
         description: 'Production server',
       },
       {
-        url: 'http://localhost:5000/api',
+        url: 'http://localhost:5000',
         description: 'Local Development server',
       },
       
       {
-        url: 'http://16.170.229.92:5000/api',
+        url: 'http://16.170.229.92:5000',
         description: 'EC2 Development server',
       },
       

@@ -12,7 +12,11 @@ const authRoutes = require('./routes/auth.routes');
 const productRoutes = require('./routes/product.routes');
 const cartRoutes = require('./routes/cart.routes');
 const orderRoutes = require('./routes/order.routes');
+const checkoutRoutes = require('./routes/checkout.routes');
 const adminRoutes = require('./routes/admin.routes');
+const adminOrdersRoutes = require('./routes/admin.orders');
+const adminDashboardRoutes = require('./routes/admin.dashboard');
+const adminCustomersRoutes = require('./routes/admin.customers');
 const categoryRoutes = require('./routes/category.routes');
 
 const app = express();
@@ -129,7 +133,11 @@ app.use('/auth', authRoutes);
 app.use('/products', productRoutes);
 app.use('/cart', cartRoutes);
 app.use('/orders', orderRoutes);
+app.use('/checkout', checkoutRoutes);
 app.use('/admin', adminRoutes);
+app.use('/admin/orders', adminOrdersRoutes);
+app.use('/admin/dashboard', adminDashboardRoutes);
+app.use('/admin/customers', adminCustomersRoutes);
 app.use('/categories', categoryRoutes);
 
 // Swagger Documentation
