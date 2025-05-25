@@ -24,7 +24,7 @@ app.set('trust proxy', 1);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Simplified CORS configuration
+// CORS configuration
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (mobile apps, Postman, etc.)
@@ -33,7 +33,6 @@ app.use(cors({
     // Allow specific origins in production
     const allowedOrigins = [
       'https://ice-deluxe-wears-git-master-yagazierems-projects.vercel.app',
-      // Add other allowed origins if needed
     ];
     
     if (process.env.NODE_ENV === 'production') {
@@ -78,9 +77,6 @@ app.use(morgan('combined'));
 const isProduction = process.env.NODE_ENV === 'production';
 console.log(`Running in ${isProduction ? 'production' : 'development'} mode`);
 
-// Route prefix logic (simplified)
-const routePrefix = '/api';
-
 // More lenient rate limiting for debugging
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -118,23 +114,23 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     endpoints: {
       health: '/health',
-      auth: '/api/auth',
-      products: '/api/products',
-      cart: '/api/cart',
-      orders: '/api/orders',
-      admin: '/api/admin',
-      categories: '/api/categories'
+      auth: '/auth',
+      products: '/products',
+      cart: '/cart',
+      orders: '/orders',
+      admin: '/admin',
+      categories: '/categories'
     }
   });
 });
 
-// API Routes
-app.use(`${routePrefix}/auth`, authRoutes);
-app.use(`${routePrefix}/products`, productRoutes);
-app.use(`${routePrefix}/cart`, cartRoutes);
-app.use(`${routePrefix}/orders`, orderRoutes);
-app.use(`${routePrefix}/admin`, adminRoutes);
-app.use(`${routePrefix}/categories`, categoryRoutes);
+// API Routes (without routePrefix)
+app.use('/auth', authRoutes);
+app.use('/products', productRoutes);
+app.use('/cart', cartRoutes);
+app.use('/orders', orderRoutes);
+app.use('/admin', adminRoutes);
+app.use('/categories', categoryRoutes);
 
 // Swagger Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
