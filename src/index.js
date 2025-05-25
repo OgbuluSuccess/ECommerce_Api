@@ -37,6 +37,8 @@ app.use(cors({
     // Allow specific origins in production and development
     const allowedOrigins = [
       'https://ice-deluxe-wears-git-master-yagazierems-projects.vercel.app',
+      'https://icedeluxewears.com',
+      'https://www.icedeluxewears.com',
       'http://localhost:3000',
       'http://localhost:5173',
       'http://127.0.0.1:3000',
@@ -47,6 +49,7 @@ app.use(cors({
     
     // In development, allow all origins
     if (process.env.NODE_ENV !== 'production') {
+      // For local development, we'll allow the request regardless of origin
       return callback(null, true);
     }
     
@@ -54,6 +57,12 @@ app.use(cors({
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
+    
+    // For subdomains in production (e.g., api.icedeluxewears.com)
+    if (process.env.NODE_ENV === 'production' && origin.endsWith('icedeluxewears.com')) {
+      return callback(null, true);
+    }
+    
     return callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
