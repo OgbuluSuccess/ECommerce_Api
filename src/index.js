@@ -34,9 +34,13 @@ app.use(cors({
     // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) return callback(null, true);
     
-    // Allow specific origins in production
+    // Allow specific origins in production and development
     const allowedOrigins = [
       'https://ice-deluxe-wears-git-master-yagazierems-projects.vercel.app',
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:5173'
     ];
     
     if (process.env.NODE_ENV === 'production') {
