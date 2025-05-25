@@ -167,7 +167,7 @@ app.use((err, req, res, next) => {
 // Enhanced MongoDB connection with better error handling
 mongoose.set('strictQuery', false);
 
-const connectWithRetry = () => {
+async function connectAndStartServer() {
   const mongoOptions = {
     serverSelectionTimeoutMS: 5000,
     socketTimeoutMS: 45000,
@@ -180,16 +180,33 @@ const connectWithRetry = () => {
 
   console.log('Attempting to connect to MongoDB...');
   
-  mongoose.connect(process.env.MONGODB_URI, mongoOptions)
-    .then(() => {
-      console.log('✅ Connected to MongoDB successfully');
-    })
-    .catch(err => {
-      console.error('❌ MongoDB connection error:', err.message);
-      console.log('🔄 Retrying connection in 5 seconds...');
-      setTimeout(connectWithRetry, 5000);
-    });
-};
+  try {
+    await mongoose.connect(process.env.MONGODB_URI, mongoOptions);
+    console.log('✅ Connected to MongoDB successfully');
+  } catch (err) {
+    console.error('❌ MongoDB connection error:', err.message);
+    console.log('🔄 Retrying connection in 5 seconds...');
+    setTimeout(connectAndStartServer, 5000);
+    return; // Exit this attempt to retry
+  }
+
+  // Start the server only after successful connection
+  const PORT = process.env.PORT || 5000;
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server is running on port ${PORT}`);
+    console.log(`📱 Health check: http://localhost:${PORT}/health`);
+    console.log(`📚 API Docs: http://localhost:${PORT}/api-docs`);
+  });
+
+  // Handle server errors
+  server.on('error', (err) => {
+    console.error('Server error:', err);
+  });
+
+  // Keep-alive configuration
+  server.keepAliveTimeout = 120000;
+  server.headersTimeout = 120000;
+}
 
 // MongoDB event listeners
 mongoose.connection.on('connected', () => {
@@ -211,21 +228,5 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
-connectWithRetry();
-
-// Start server with better error handling
-const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server is running on port ${PORT}`);
-  console.log(`📱 Health check: http://localhost:${PORT}/health`);
-  console.log(`📚 API Docs: http://localhost:${PORT}/api-docs`);
-});
-
-// Handle server errors
-server.on('error', (err) => {
-  console.error('Server error:', err);
-});
-
-// Keep-alive configuration
-server.keepAliveTimeout = 120000;
-server.headersTimeout = 120000;
+// Start the server with MongoDB connection
+connectAndStartServer();
