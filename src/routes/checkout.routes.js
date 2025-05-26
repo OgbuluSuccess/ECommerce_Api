@@ -6,6 +6,142 @@ const Order = require('../models/order.model');
 const Product = require('../models/product.model');
 const { protect } = require('../middleware/auth.middleware');
 const paystack = require('../config/paystack.config');
+const crypto = require('crypto');
+
+/**
+ * @swagger
+ * /verify-payment/paystack/{reference}:
+ *   get:
+ *     summary: Verify Paystack payment status
+ *     tags: [Checkout]
+ *     parameters:
+ *       - in: path
+ *         name: reference
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Payment reference from Paystack
+ *     responses:
+ *       200:
+ *         description: Payment verification successful
+ */
+router.get('/:reference', async (req, res) => {
+  try {
+    const { reference } = req.params;
+
+    // Verify payment status with Paystack
+    const response = await paystack.transaction.verify(reference);
+console.log('Paystack response:', response.body);
+    if (!response.status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment verification failed',
+        error: response.message
+      });
+    }
+
+    // Find order by reference
+    const order = await Order.findOne({ 'paymentDetails.reference': reference });
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    // Update order status based on Paystack response
+    if (response.data.status === 'success') {
+      order.paymentStatus = 'completed';
+      order.status = 'processing';
+      
+      // Update product stock
+      for (const item of order.items) {
+        const product = await Product.findById(item.product);
+        if (product) {
+          product.stock -= item.quantity;
+          await product.save();
+        }
+      }
+    } else {
+      order.paymentStatus = 'failed';
+    }
+
+    order.paymentDetails.verificationResponse = response.data;
+    await order.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment verification completed',
+      data: {
+        paymentStatus: order.paymentStatus,
+        orderStatus: order.status,
+        order: order
+      }
+    });
+  } catch (error) {
+    console.error('Payment verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error verifying payment',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /webhook/paystack:
+ *   post:
+ *     summary: Handle Paystack webhook notifications
+ *     tags: [Checkout]
+ *     responses:
+ *       200:
+ *         description: Webhook processed successfully
+ */
+router.post('/webhook/paystack', async (req, res) => {
+  try {
+    const hash = crypto
+      .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+      .update(JSON.stringify(req.body))
+      .digest('hex');
+
+    if (hash !== req.headers['x-paystack-signature']) {
+      return res.status(400).json({ status: false });
+    }
+
+    const event = req.body;
+
+    // Handle different event types
+    switch(event.event) {
+      case 'charge.success':
+        const order = await Order.findOne({
+          'paymentDetails.reference': event.data.reference
+        });
+
+        if (order) {
+          order.paymentStatus = 'paid';
+          order.status = 'processing';
+          order.paymentDetails.verificationResponse = event.data;
+          await order.save();
+
+          // Update product stock
+          for (const item of order.items) {
+            const product = await Product.findById(item.product);
+            if (product) {
+              product.stock -= item.quantity;
+              await product.save();
+            }
+          }
+        }
+        break;
+    }
+
+    res.status(200).json({ status: true });
+  } catch (error) {
+    console.error('Webhook error:', error);
+    res.status(500).json({ status: false });
+  }
+});
 
 /**
  * @swagger
@@ -164,13 +300,22 @@ router.post('/guest', async (req, res) => {
       // shippingCost: calculateShippingCost(shippingMethod, totalAmount),
     });
 
-    // Generate a unique reference
-    const reference = `PAY-${order.orderNumber}`;
+    // Generate a unique reference with IDW format
+    const reference = `IDW${Math.floor(100000 + Math.random() * 900000)}`;
 
+    // Inside your guest checkout route, before initializing Paystack
+    console.log('Paystack config:', typeof paystack, Object.keys(paystack));
+    console.log('Attempting to initialize Paystack transaction with:', {
+      email: user.email,
+      amount: Math.round(totalAmount * 100),
+      reference,
+      callback_url: `${process.env.FRONTEND_URL}/payment/verify/${order._id}`
+    });
+    
     // Initialize Paystack transaction
     const paystackResponse = await paystack.transaction.initialize({
       email: user.email,
-      amount: Math.round(totalAmount * 100), // Paystack amount in kobo (multiply by 100)
+      amount: Math.round(totalAmount * 100), // Amount in Kobo (multiply by 100 to convert from Naira)
       reference,
       callback_url: `${process.env.FRONTEND_URL}/payment/verify/${order._id}`,
       metadata: {
@@ -182,6 +327,26 @@ router.post('/guest', async (req, res) => {
             value: order.orderNumber
           }
         ]
+      }
+    });
+
+    // Update order with payment details
+    order.paymentDetails = {
+      reference: reference,
+      authorization_url: paystackResponse.data.authorization_url,
+      access_code: paystackResponse.data.access_code
+    };
+    await order.save();
+
+    // Return success response with payment URL
+    return res.status(200).json({
+      success: true,
+      message: 'Payment initialized successfully',
+      data: {
+        authorization_url: paystackResponse.data.authorization_url,
+        access_code: paystackResponse.data.access_code,
+        reference: reference,
+        order_id: order._id
       }
     });
 
@@ -310,8 +475,8 @@ router.post('/user', protect, async (req, res) => {
       // shippingCost: calculateShippingCost(shippingMethod, cart.totalAmount),
     });
 
-    // Generate a unique reference
-    const reference = `PAY-${order.orderNumber}`;
+    // Generate a unique reference with IDW format
+    const reference = `IDW${Math.floor(100000 + Math.random() * 900000)}`;
 
     // Initialize Paystack transaction
     const paystackResponse = await paystack.transaction.initialize({
