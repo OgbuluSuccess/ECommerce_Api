@@ -154,7 +154,7 @@ app.use('/auth', authRoutes);
 app.use('/products', productRoutes);
 app.use('/cart', cartRoutes);
 app.use('/orders', orderRoutes);
-app.use('/verify-payment/paystack', checkoutRoutes);
+// Only register checkout routes once with the correct prefix
 app.use('/checkout', checkoutRoutes);
 app.use('/admin', adminRoutes);
 app.use('/admin/orders', adminOrdersRoutes);

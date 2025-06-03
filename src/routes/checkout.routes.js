@@ -10,7 +10,7 @@ const crypto = require('crypto');
 
 /**
  * @swagger
- * /verify-payment/paystack/{reference}:
+ * /checkout/verify-payment/{reference}:
  *   get:
  *     summary: Verify Paystack payment status
  *     tags: [Checkout]
@@ -25,7 +25,7 @@ const crypto = require('crypto');
  *       200:
  *         description: Payment verification successful
  */
-router.get('/:reference', async (req, res) => {
+router.get('/verify-payment/:reference', async (req, res) => {
   try {
     const { reference } = req.params;
 
@@ -431,7 +431,7 @@ router.post('/guest', async (req, res) => {
       email: user.email,
       amount: Math.round(order.totalAmount * 100), // Includes shipping cost
       reference,
-      callback_url: `${process.env.FRONTEND_URL}/payment/verify/${order._id}`
+      callback_url: `${process.env.FRONTEND_URL}/paymentVerify/${order._id}`
     });
     
     // Initialize Paystack transaction
@@ -439,7 +439,7 @@ router.post('/guest', async (req, res) => {
       email: user.email,
       amount: Math.round(order.totalAmount * 100), // Amount in Kobo (multiply by 100 to convert from Naira) - includes shipping
       reference,
-      callback_url: `${process.env.FRONTEND_URL}/payment/verify/${order._id}`,
+      callback_url: `${process.env.FRONTEND_URL}/paymentVerify/${order._id}`,
       metadata: {
         order_id: order._id.toString(),
         custom_fields: [
