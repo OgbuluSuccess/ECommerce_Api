@@ -33,6 +33,21 @@ const orderSchema = new mongoose.Schema({
     zipCode: String,
     country: String
   },
+  shipping: {
+    zone: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'ShippingZone'
+    },
+    method: String,
+    cost: {
+      type: Number,
+      default: 0
+    },
+    estimatedDeliveryTime: String,
+    trackingNumber: String,
+    trackingUrl: String,
+    carrier: String
+  },
   status: {
     type: String,
     enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled'],

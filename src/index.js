@@ -18,6 +18,7 @@ const adminOrdersRoutes = require('./routes/admin.orders');
 const adminDashboardRoutes = require('./routes/admin.dashboard');
 const adminCustomersRoutes = require('./routes/admin.customers');
 const categoryRoutes = require('./routes/category.routes');
+const shippingRoutes = require('./routes/shipping.routes');
 
 const app = express();
 
@@ -142,7 +143,8 @@ app.get('/', (req, res) => {
       cart: '/cart',
       orders: '/orders',
       admin: '/admin',
-      categories: '/categories'
+      categories: '/categories',
+      shipping: '/shipping'
     }
   });
 });
@@ -159,6 +161,7 @@ app.use('/admin/orders', adminOrdersRoutes);
 app.use('/admin/dashboard', adminDashboardRoutes);
 app.use('/admin/customers', adminCustomersRoutes);
 app.use('/categories', categoryRoutes);
+app.use('/shipping', shippingRoutes);
 
 // Swagger Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));

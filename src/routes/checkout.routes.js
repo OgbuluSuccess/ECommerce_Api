@@ -194,6 +194,19 @@ router.post('/webhook/paystack', async (req, res) => {
  *                 type: array
  *                 items:
  *                   type: object
+ *                   properties:
+ *                     productId:
+ *                       type: string
+ *                       description: MongoDB ObjectId of the product
+ *                       example: 60d21b4667d0d8992e610c85
+ *                     quantity:
+ *                       type: integer
+ *                       description: Number of items to purchase
+ *                       example: 2
+ *               shippingZoneId:
+ *                 type: string
+ *                 description: ID of the shipping zone or 'pickup' for store pickup
+ *                 example: 60d21b4667d0d8992e610c85
  *     responses:
  *       200:
  *         description: Checkout successful, redirecting to payment
@@ -213,6 +226,7 @@ router.post('/guest', async (req, res) => {
       saveAddress,
       note,
       shippingMethod,
+      shippingZoneId,
       cartItems 
     } = req.body;
 
@@ -286,18 +300,126 @@ router.post('/guest', async (req, res) => {
       await user.save();
     }
 
+    // Get shipping zone details if provided
+    let shippingZone = null;
+    let shippingCost = 0;
+    let estimatedDeliveryTime = '';
+    let carrier = '';
+    
+    // Extract state from shipping address
+    const shippingState = shippingAddress?.state || '';
+    
+    if (shippingZoneId) {
+      const { ShippingZone, ShippingSettings, StorePickup } = require('../models/shipping.model');
+      
+      // Get shipping settings for free delivery threshold
+      let settings = await ShippingSettings.findOne();
+      if (!settings) {
+        settings = await ShippingSettings.create({});
+      }
+      
+      // Handle store pickup
+      if (shippingZoneId === 'pickup') {
+        let pickupConfig = await StorePickup.findOne();
+        if (!pickupConfig) {
+          pickupConfig = await StorePickup.create({
+            storeAddress: 'Shop 15, Banex Plaza, Wuse 2, Abuja',
+            workingHours: 'Mon-Sat: 9:00 AM - 6:00 PM'
+          });
+        }
+        
+        shippingCost = 0;
+        estimatedDeliveryTime = pickupConfig.preparationTime || '2-4 hours';
+        carrier = 'Store Pickup';
+      } else {
+        // Handle regular shipping zones
+        shippingZone = await ShippingZone.findById(shippingZoneId);
+        
+        if (shippingZone) {
+          // Validate that the shipping zone matches the state
+          if (shippingZone.type === 'interstate' && state && !shippingZone.areas.includes(state) && 
+              !shippingZone.areas.includes('nationwide') && !shippingZone.areas.includes('all states')) {
+            return res.status(400).json({
+              success: false,
+              message: `Selected shipping zone does not cover ${state}. Please select a valid shipping option.`
+            });
+          }
+          
+          shippingCost = shippingZone.price;
+          estimatedDeliveryTime = shippingZone.estimatedDeliveryTime;
+          carrier = shippingZone.courierPartner || settings.defaultCourierPartner;
+          
+          // Apply free shipping for orders above the threshold
+          if (totalAmount >= settings.freeDeliveryThreshold) {
+            shippingCost = 0;
+          }
+        }
+      }
+    } else if (shippingState) {
+      // If no shipping zone ID but we have a state, try to find an appropriate zone
+      const { ShippingZone, ShippingSettings } = require('../models/shipping.model');
+      
+      // Get shipping settings
+      let settings = await ShippingSettings.findOne();
+      if (!settings) {
+        settings = await ShippingSettings.create({});
+      }
+      
+      // Find a shipping zone for this state
+      let zone;
+      
+      if (state === 'FCT' || state.toLowerCase().includes('abuja')) {
+        zone = await ShippingZone.findOne({ type: 'abuja', isActive: true });
+      } else {
+        zone = await ShippingZone.findOne({
+          type: 'interstate',
+          isActive: true,
+          areas: { $in: [state] }
+        });
+        
+        // If no specific zone, try to find a nationwide zone
+        if (!zone) {
+          zone = await ShippingZone.findOne({
+            type: 'interstate',
+            isActive: true,
+            areas: { $in: ['nationwide', 'all states'] }
+          });
+        }
+      }
+      
+      if (zone) {
+        shippingZone = zone;
+        shippingCost = zone.price;
+        estimatedDeliveryTime = zone.estimatedDeliveryTime;
+        carrier = zone.courierPartner || settings.defaultCourierPartner;
+        
+        // Apply free shipping for orders above the threshold
+        if (totalAmount >= settings.freeDeliveryThreshold) {
+          shippingCost = 0;
+        }
+      }
+    }
+    
     // Create order
     const order = await Order.create({
       user: user._id,
       items: orderItems,
-      totalAmount,
-      shippingAddress: formattedShippingAddress,
-      paymentMethod: 'paystack',
+      totalAmount: totalAmount + shippingCost,
+      shippingAddress: {
+        street: shippingAddress,
+        city,
+        state,
+        country
+      },
+      shipping: {
+        zone: shippingZoneId,
+        method: shippingMethod,
+        cost: shippingCost,
+        estimatedDeliveryTime
+      },
+      status: 'pending',
       paymentStatus: 'pending',
-      shippingMethod,
-      note: note || '',
-      // Add shipping cost if applicable based on shipping method
-      // shippingCost: calculateShippingCost(shippingMethod, totalAmount),
+      paymentMethod: 'paystack'
     });
 
     // Generate a unique reference with IDW format
@@ -307,7 +429,7 @@ router.post('/guest', async (req, res) => {
     console.log('Paystack config:', typeof paystack, Object.keys(paystack));
     console.log('Attempting to initialize Paystack transaction with:', {
       email: user.email,
-      amount: Math.round(totalAmount * 100),
+      amount: Math.round(order.totalAmount * 100), // Includes shipping cost
       reference,
       callback_url: `${process.env.FRONTEND_URL}/payment/verify/${order._id}`
     });
@@ -315,7 +437,7 @@ router.post('/guest', async (req, res) => {
     // Initialize Paystack transaction
     const paystackResponse = await paystack.transaction.initialize({
       email: user.email,
-      amount: Math.round(totalAmount * 100), // Amount in Kobo (multiply by 100 to convert from Naira)
+      amount: Math.round(order.totalAmount * 100), // Amount in Kobo (multiply by 100 to convert from Naira) - includes shipping
       reference,
       callback_url: `${process.env.FRONTEND_URL}/payment/verify/${order._id}`,
       metadata: {
@@ -422,7 +544,7 @@ router.post('/guest', async (req, res) => {
  */
 router.post('/user', protect, async (req, res) => {
   try {
-    const { shippingAddress, shippingMethod, note } = req.body;
+    const { shippingAddress, shippingMethod, shippingZoneId, note } = req.body;
 
     // Validate required fields
     if (!shippingAddress || !shippingMethod) {
@@ -460,19 +582,123 @@ router.post('/user', protect, async (req, res) => {
         message: 'User not found'
       });
     }
-
+    
+    // Get shipping zone details if provided
+    let shippingZone = null;
+    let shippingCost = 0;
+    let estimatedDeliveryTime = '';
+    let carrier = '';
+    
+    // Extract state from shipping address
+    const shippingState = shippingAddress?.state || '';
+    
+    if (shippingZoneId) {
+      const { ShippingZone, ShippingSettings, StorePickup } = require('../models/shipping.model');
+      
+      // Get shipping settings for free delivery threshold
+      let settings = await ShippingSettings.findOne();
+      if (!settings) {
+        settings = await ShippingSettings.create({});
+      }
+      
+      // Handle store pickup
+      if (shippingZoneId === 'pickup') {
+        let pickupConfig = await StorePickup.findOne();
+        if (!pickupConfig) {
+          pickupConfig = await StorePickup.create({
+            storeAddress: 'Shop 15, Banex Plaza, Wuse 2, Abuja',
+            workingHours: 'Mon-Sat: 9:00 AM - 6:00 PM'
+          });
+        }
+        
+        shippingCost = 0;
+        estimatedDeliveryTime = pickupConfig.preparationTime || '2-4 hours';
+        carrier = 'Store Pickup';
+      } else {
+        // Handle regular shipping zones
+        shippingZone = await ShippingZone.findById(shippingZoneId);
+        
+        if (shippingZone) {
+          // Validate that the shipping zone matches the state
+          if (shippingZone.type === 'interstate' && state && !shippingZone.areas.includes(state) && 
+              !shippingZone.areas.includes('nationwide') && !shippingZone.areas.includes('all states')) {
+            return res.status(400).json({
+              success: false,
+              message: `Selected shipping zone does not cover ${state}. Please select a valid shipping option.`
+            });
+          }
+          
+          shippingCost = shippingZone.price;
+          estimatedDeliveryTime = shippingZone.estimatedDeliveryTime;
+          carrier = shippingZone.courierPartner || settings.defaultCourierPartner;
+          
+          // Apply free shipping for orders above the threshold
+          if (cart.totalAmount >= settings.freeDeliveryThreshold) {
+            shippingCost = 0;
+          }
+        }
+      }
+    } else if (shippingState) {
+      // If no shipping zone ID but we have a state, try to find an appropriate zone
+      const { ShippingZone, ShippingSettings } = require('../models/shipping.model');
+      
+      // Get shipping settings
+      let settings = await ShippingSettings.findOne();
+      if (!settings) {
+        settings = await ShippingSettings.create({});
+      }
+      
+      // Find a shipping zone for this state
+      let zone;
+      
+      if (state === 'FCT' || state.toLowerCase().includes('abuja')) {
+        zone = await ShippingZone.findOne({ type: 'abuja', isActive: true });
+      } else {
+        zone = await ShippingZone.findOne({
+          type: 'interstate',
+          isActive: true,
+          areas: { $in: [state] }
+        });
+        
+        // If no specific zone, try to find a nationwide zone
+        if (!zone) {
+          zone = await ShippingZone.findOne({
+            type: 'interstate',
+            isActive: true,
+            areas: { $in: ['nationwide', 'all states'] }
+          });
+        }
+      }
+      
+      if (zone) {
+        shippingZone = zone;
+        shippingCost = zone.price;
+        estimatedDeliveryTime = zone.estimatedDeliveryTime;
+        carrier = zone.courierPartner || settings.defaultCourierPartner;
+        
+        // Apply free shipping for orders above the threshold
+        if (cart.totalAmount >= settings.freeDeliveryThreshold) {
+          shippingCost = 0;
+        }
+      }
+    }
+    
     // Create order
     const order = await Order.create({
       user: req.user._id,
       items: cart.items,
-      totalAmount: cart.totalAmount,
+      totalAmount: cart.totalAmount + shippingCost,
       shippingAddress,
-      paymentMethod: 'paystack',
+      shipping: {
+        zone: shippingZoneId,
+        method: shippingMethod,
+        cost: shippingCost,
+        estimatedDeliveryTime
+      },
+      status: 'pending',
       paymentStatus: 'pending',
-      shippingMethod,
+      paymentMethod: 'paystack',
       note: note || ''
-      // Add shipping cost if applicable
-      // shippingCost: calculateShippingCost(shippingMethod, cart.totalAmount),
     });
 
     // Generate a unique reference with IDW format
@@ -481,7 +707,7 @@ router.post('/user', protect, async (req, res) => {
     // Initialize Paystack transaction
     const paystackResponse = await paystack.transaction.initialize({
       email: user.email,
-      amount: Math.round(cart.totalAmount * 100), // Paystack amount in kobo (multiply by 100)
+      amount: Math.round(order.totalAmount * 100), // Paystack amount in kobo (multiply by 100) - includes shipping
       reference,
       callback_url: `${process.env.FRONTEND_URL}/payment/verify/${order._id}`,
       metadata: {
@@ -555,32 +781,128 @@ router.post('/user', protect, async (req, res) => {
  */
 router.get('/shipping-methods', async (req, res) => {
   try {
-    // You can fetch these from a database if you have a shipping methods collection
-    // For now, we'll return hardcoded shipping methods
-    const shippingMethods = [
-      {
-        id: 'standard',
-        name: 'Standard Shipping',
-        description: 'Delivery within 5-7 business days',
-        price: 1000, // ₦1,000
-        estimatedDelivery: '5-7 business days'
-      },
-      {
-        id: 'express',
-        name: 'Express Shipping',
-        description: 'Delivery within 2-3 business days',
-        price: 2500, // ₦2,500
-        estimatedDelivery: '2-3 business days'
-      },
-      {
-        id: 'same_day',
-        name: 'Same Day Delivery',
-        description: 'Available only in Lagos',
-        price: 3500, // ₦3,500
-        estimatedDelivery: 'Same day (order before 12pm)',
-        restrictions: ['Lagos only']
+    // Get state from query parameter
+    const { state } = req.query;
+    
+    // Get shipping zones from the database
+    const { ShippingZone, StorePickup, ShippingSettings } = require('../models/shipping.model');
+    
+    // Get shipping settings for free delivery threshold
+    let settings = await ShippingSettings.findOne();
+    if (!settings) {
+      settings = await ShippingSettings.create({});
+    }
+    
+    // Build shipping methods array
+    const shippingMethods = [];
+    
+    // Check if store pickup is enabled
+    let pickupConfig = await StorePickup.findOne();
+    if (!pickupConfig) {
+      pickupConfig = await StorePickup.create({
+        storeAddress: 'Shop 15, Banex Plaza, Wuse 2, Abuja',
+        workingHours: 'Mon-Sat: 9:00 AM - 6:00 PM'
+      });
+    }
+    
+    // If state is FCT/Abuja, get Abuja zones
+    if (!state || state === 'FCT' || state.toLowerCase().includes('abuja')) {
+      const abujaZones = await ShippingZone.find({ type: 'abuja', isActive: true });
+      
+      abujaZones.forEach(zone => {
+        shippingMethods.push({
+          id: zone._id,
+          name: zone.name,
+          description: `Delivery within Abuja/FCT`,
+          price: zone.price,
+          estimatedDelivery: zone.estimatedDeliveryTime,
+          type: 'abuja',
+          areas: zone.areas,
+          courierPartner: zone.courierPartner || settings.defaultCourierPartner
+        });
+      });
+      
+      // Add store pickup if enabled and we're in Abuja
+      if (pickupConfig.isEnabled) {
+        shippingMethods.push({
+          id: 'pickup',
+          name: 'Store Pickup',
+          description: `Pickup at ${pickupConfig.storeAddress}`,
+          price: 0, // Free pickup
+          estimatedDelivery: pickupConfig.preparationTime || '2-4 hours',
+          type: 'pickup',
+          workingHours: pickupConfig.workingHours,
+          pickupInstructions: pickupConfig.pickupInstructions
+        });
       }
-    ];
+    } else {
+      // For other states, find matching interstate zones
+      const interstateZones = await ShippingZone.find({
+        type: 'interstate', 
+        isActive: true,
+        areas: { $in: [state] } // Find zones that include this state
+      });
+      
+      interstateZones.forEach(zone => {
+        shippingMethods.push({
+          id: zone._id,
+          name: zone.name,
+          description: `Delivery to ${shippingState}`,
+          price: zone.price,
+          estimatedDelivery: zone.estimatedDeliveryTime,
+          type: 'interstate',
+          state: state,
+          courierPartner: zone.courierPartner || settings.defaultCourierPartner
+        });
+      });
+      
+      // If no specific zone for this state, get generic interstate zones
+      if (interstateZones.length === 0) {
+        const genericZones = await ShippingZone.find({
+          type: 'interstate',
+          isActive: true,
+          areas: { $in: ['nationwide', 'all states'] }
+        });
+        
+        genericZones.forEach(zone => {
+          shippingMethods.push({
+            id: zone._id,
+            name: zone.name,
+            description: `Delivery to ${state}`,
+            price: zone.price,
+            estimatedDelivery: zone.estimatedDeliveryTime,
+            type: 'interstate',
+            state: state,
+            courierPartner: zone.courierPartner || settings.defaultCourierPartner
+          });
+        });
+      }
+    }
+    
+    // If no shipping methods are found, provide fallback methods
+    if (shippingMethods.length === 0) {
+      // Default method based on state
+      if (!state || state === 'FCT' || state.toLowerCase().includes('abuja')) {
+        shippingMethods.push({
+          id: 'abuja-standard',
+          name: 'Abuja Standard Delivery',
+          description: 'Delivery within Abuja',
+          price: 1000, // ₦1,000
+          estimatedDelivery: '1-2 business days',
+          type: 'abuja'
+        });
+      } else {
+        shippingMethods.push({
+          id: 'interstate-standard',
+          name: 'Interstate Delivery',
+          description: `Delivery to ${shippingState}`,
+          price: 2500, // ₦2,500
+          estimatedDelivery: '3-5 business days',
+          type: 'interstate',
+          state: state
+        });
+      }
+    }
 
     res.status(200).json({
       success: true,
