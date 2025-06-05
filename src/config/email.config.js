@@ -38,9 +38,13 @@ function createConsoleTransport() {
 
 // Initialize the transporter based on environment
 function initializeTransporter() {
-  // Force development mode if running locally, unless explicitly set to production
-  const isProduction = process.env.NODE_ENV === 'production' && 
-                      process.env.FORCE_EMAIL_PRODUCTION === 'true';
+  // Check if we have the required email configuration
+  const hasEmailConfig = process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASSWORD;
+  
+  // Use production email if we have the config or if explicitly set
+  const isProduction = hasEmailConfig && 
+                      (process.env.NODE_ENV === 'production' || 
+                       process.env.FORCE_EMAIL_PRODUCTION === 'true');
   
   if (isProduction) {
     try {
@@ -56,6 +60,21 @@ function initializeTransporter() {
         },
         connectionTimeout: 10000, // 10 seconds
         greetingTimeout: 10000,   // 10 seconds
+        tls: {
+          // Do not fail on invalid certificates
+          rejectUnauthorized: false
+        }
+      });
+      
+      // Verify the connection
+      transporter.verify(function(error, success) {
+        if (error) {
+          console.error('Email transport verification failed:', error);
+          console.log('Falling back to console transport');
+          transporter = createConsoleTransport();
+        } else {
+          console.log('Email transport verified successfully');
+        }
       });
       
       console.log('Email transport initialized for production');
@@ -90,8 +109,19 @@ const sendMail = async (mailOptions) => {
       .trim();
   }
   
-  // Send the email
-  return transporter.sendMail(mailOptions);
+  try {
+    // Send the email
+    const result = await transporter.sendMail(mailOptions);
+    console.log(`Email sent successfully to ${mailOptions.to}`);
+    return result;
+  } catch (error) {
+    console.error(`Failed to send email to ${mailOptions.to}:`, error);
+    // Log the error but don't throw it to prevent disrupting the application flow
+    return {
+      error: true,
+      message: error.message
+    };
+  }
 };
 
 module.exports = { sendMail };

@@ -6,6 +6,7 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./swagger');
+const { initializeEmailScheduler } = require('./schedulers/email-scheduler');
 
 // Import routes
 const authRoutes = require('./routes/auth.routes');
@@ -214,6 +215,20 @@ async function connectAndStartServer() {
   try {
     await mongoose.connect(process.env.MONGODB_URI, mongoOptions);
     console.log('✅ Connected to MongoDB successfully');
+    
+    // Initialize email scheduler after successful MongoDB connection
+    if (process.env.ENABLE_EMAIL_SCHEDULER === 'true') {
+      try {
+        console.log('Initializing email scheduler...');
+        initializeEmailScheduler();
+        console.log('Email scheduler initialized successfully');
+      } catch (error) {
+        console.error('Failed to initialize email scheduler:', error.message);
+        console.log('The application will continue to run without the email scheduler');
+      }
+    } else {
+      console.log('Email scheduler is disabled. Set ENABLE_EMAIL_SCHEDULER=true to enable it.');
+    }
   } catch (err) {
     console.error('❌ MongoDB connection error:', err.message);
     console.log('🔄 Retrying connection in 5 seconds...');

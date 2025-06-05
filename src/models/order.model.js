@@ -43,10 +43,15 @@ const orderSchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
-    estimatedDeliveryTime: String,
+    estimatedDeliveryTime: String
+  },
+  trackingInfo: {
+    courier: String,
     trackingNumber: String,
     trackingUrl: String,
-    carrier: String
+    estimatedDelivery: String,
+    shippedAt: Date,
+    deliveredAt: Date
   },
   status: {
     type: String,

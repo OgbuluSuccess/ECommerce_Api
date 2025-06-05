@@ -8,6 +8,8 @@ const User = require('../models/user.model');
 const { protect, restrictTo } = require('../middleware/auth.middleware');
 const paystack = require('../config/paystack.config');
 const { sendOrderConfirmationEmail, sendNewOrderAdminNotification, sendOrderStatusUpdateEmail } = require('../utils/email.utils');
+const { sendShippingConfirmationEmail, sendDeliveryConfirmationEmail } = require('../utils/shipping-emails');
+const { sendFailedPaymentAlert } = require('../utils/admin-emails');
 
 /**
  * @swagger
@@ -171,7 +173,7 @@ router.get('/:id', protect, async (req, res) => {
 // Update order status (Admin only)
 router.patch('/:id', protect, restrictTo('admin'), async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, trackingInfo } = req.body;
 
     const order = await Order.findById(req.params.id);
     if (!order) {
@@ -180,21 +182,64 @@ router.patch('/:id', protect, restrictTo('admin'), async (req, res) => {
         message: 'Order not found'
       });
     }
+
+    // Save previous status to check for status change
+    const previousStatus = order.status;
     
     // Update order status
     order.status = status;
-    await order.save();
     
+    // If tracking info is provided, save it to the order
+    if (trackingInfo) {
+      order.trackingInfo = trackingInfo;
+    }
+    
+    await order.save();
+    await order.populate('items.product');
+
     // Get user details for email
     const user = await User.findById(order.user);
-    if (user) {
-      // Send order status update email to customer
-      try {
-        await sendOrderStatusUpdateEmail(order, user);
-        console.log(`Order status update email sent to ${user.email}`);
-      } catch (emailError) {
-        console.error('Error sending order status update email:', emailError);
+    if (!user) {
+      console.error('User not found for order:', order._id);
+      return res.status(200).json({
+        success: true,
+        data: order
+      });
+    }
+
+    // Send appropriate email based on order status
+    try {
+      switch (status) {
+        case 'shipped':
+          // Only send if status changed to shipped and tracking info exists
+          if (previousStatus !== 'shipped' && order.trackingInfo) {
+            await sendShippingConfirmationEmail(order, user, order.trackingInfo);
+            console.log(`Shipping confirmation email sent to ${user.email}`);
+          } else {
+            await sendOrderStatusUpdateEmail(order, user);
+            console.log(`Order status update email sent to ${user.email}`);
+          }
+          break;
+          
+        case 'delivered':
+          // Only send if status changed to delivered
+          if (previousStatus !== 'delivered') {
+            await sendDeliveryConfirmationEmail(order, user);
+            console.log(`Delivery confirmation email sent to ${user.email}`);
+          } else {
+            await sendOrderStatusUpdateEmail(order, user);
+            console.log(`Order status update email sent to ${user.email}`);
+          }
+          break;
+          
+        default:
+          // For all other status changes, send the regular status update email
+          await sendOrderStatusUpdateEmail(order, user);
+          console.log(`Order status update email sent to ${user.email}`);
       }
+    } catch (emailError) {
+      console.error('Error sending order status email:', emailError);
+      // Continue with order update even if email fails
     }
 
     res.status(200).json({
@@ -562,6 +607,25 @@ router.post('/webhook/paystack', async (req, res) => {
         if (failedOrder) {
           failedOrder.paymentStatus = 'failed';
           await failedOrder.save();
+          
+          // Get user details for failed payment alert
+          const userWithFailedPayment = await User.findById(failedOrder.user);
+          if (userWithFailedPayment) {
+            try {
+              // Send failed payment alert to admin
+              const paymentDetails = {
+                method: 'paystack',
+                reference: failedReference,
+                errorMessage: event.data.gateway_response || 'Payment failed',
+                timestamp: new Date()
+              };
+              
+              await sendFailedPaymentAlert(failedOrder, userWithFailedPayment, paymentDetails);
+              console.log('Failed payment alert sent to admin');
+            } catch (emailError) {
+              console.error('Error sending failed payment alert:', emailError);
+            }
+          }
         }
         break;
     }

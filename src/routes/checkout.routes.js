@@ -7,6 +7,8 @@ const Product = require('../models/product.model');
 const { protect } = require('../middleware/auth.middleware');
 const paystack = require('../config/paystack.config');
 const crypto = require('crypto');
+const { sendOrderConfirmationEmail, sendNewOrderAdminNotification } = require('../utils/email.utils');
+const { sendFailedPaymentAlert } = require('../utils/admin-emails');
 
 /**
  * @swagger
@@ -68,6 +70,43 @@ console.log('Paystack response:', response.body);
 
     order.paymentDetails.verificationResponse = response.data;
     await order.save();
+
+    // Get user details for email
+    const user = await User.findById(order.user);
+    
+    if (response.data.status === 'success') {
+      // Send order confirmation email to customer
+      try {
+        await sendOrderConfirmationEmail(order, user);
+        console.log(`Order confirmation email sent to ${user.email}`);
+      } catch (emailError) {
+        console.error('Error sending order confirmation email:', emailError);
+        // Continue with order processing even if email fails
+      }
+      
+      // Send notification to admin
+      try {
+        await sendNewOrderAdminNotification(order, user);
+        console.log('New order notification sent to admin');
+      } catch (emailError) {
+        console.error('Error sending admin notification email:', emailError);
+      }
+    } else if (response.data.status === 'failed') {
+      // Send failed payment alert to admin
+      try {
+        const paymentDetails = {
+          method: 'paystack',
+          reference: reference,
+          errorMessage: response.data.gateway_response || 'Payment failed',
+          timestamp: new Date()
+        };
+        
+        await sendFailedPaymentAlert(order, user, paymentDetails);
+        console.log('Failed payment alert sent to admin');
+      } catch (emailError) {
+        console.error('Error sending failed payment alert:', emailError);
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -134,6 +173,27 @@ router.post('/webhook/paystack', async (req, res) => {
           }
         }
         break;
+    }
+
+    // Get user details for email
+    const user = await User.findById(order.user);
+    
+    if (user) {
+      // Send order confirmation email to customer
+      try {
+        await sendOrderConfirmationEmail(order, user);
+        console.log(`Order confirmation email sent to ${user.email} via webhook`);
+      } catch (emailError) {
+        console.error('Error sending order confirmation email via webhook:', emailError);
+      }
+      
+      // Send notification to admin
+      try {
+        await sendNewOrderAdminNotification(order, user);
+        console.log('New order notification sent to admin via webhook');
+      } catch (emailError) {
+        console.error('Error sending admin notification email via webhook:', emailError);
+      }
     }
 
     res.status(200).json({ status: true });

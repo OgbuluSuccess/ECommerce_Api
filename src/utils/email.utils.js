@@ -1,4 +1,19 @@
 const { sendMail } = require('../config/email.config');
+const { EMAIL_STYLES, emailComponents, baseEmailTemplate } = require('./emailTemplates');
+
+/**
+ * Helper function to generate order items table rows
+ * @param {Array} items - Order items array
+ * @returns {Array} Formatted table rows
+ */
+const generateOrderItemsRows = (items) => {
+  return items.map(item => ([
+    { content: item.product.name },
+    { content: item.quantity, align: 'center' },
+    { content: `₦${item.price.toFixed(2)}`, align: 'right' },
+    { content: `₦${(item.price * item.quantity).toFixed(2)}`, align: 'right' }
+  ]));
+};
 
 /**
  * Send welcome email to newly registered user
@@ -6,39 +21,49 @@ const { sendMail } = require('../config/email.config');
  * @returns {Promise}
  */
 const sendWelcomeEmail = async (user) => {
-  const mailOptions = {
-    from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'noreply@icedeluxewears.com'}>`,
-    to: user.email,
-    subject: 'Welcome to Ice Deluxe Wears',
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <div style="background-color: #f8f9fa; padding: 20px; text-align: center;">
-          <h1 style="color: #333;">Welcome to Ice Deluxe Wears!</h1>
-        </div>
-        <div style="padding: 20px;">
-          <p>Hello ${user.name},</p>
-          <p>Thank you for registering with Ice Deluxe Wears. We're excited to have you as part of our community!</p>
-          <p>With your new account, you can:</p>
-          <ul>
-            <li>Shop our latest collections</li>
-            <li>Track your orders</li>
-            <li>Save items to your wishlist</li>
-            <li>Receive exclusive offers</li>
-          </ul>
-          <p>If you have any questions or need assistance, please don't hesitate to contact our customer support team.</p>
-          <div style="margin-top: 30px;">
-            <a href="${process.env.FRONTEND_URL}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;">Start Shopping</a>
-          </div>
-        </div>
-        <div style="background-color: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 12px;">
-          <p>u00a9 ${new Date().getFullYear()} Ice Deluxe Wears. All rights reserved.</p>
-          <p>If you did not register for this account, please ignore this email.</p>
-        </div>
+  try {
+    const content = `
+      <p>Hello ${user.name},</p>
+      <p>Thank you for registering with Ice Deluxe Wears. We're excited to have you as part of our community!</p>
+      
+      <p>With your new account, you can:</p>
+      <ul>
+        <li>Shop our latest collections</li>
+        <li>Track your orders</li>
+        <li>Save items to your wishlist</li>
+        <li>Receive exclusive offers</li>
+      </ul>
+      
+      <p>If you have any questions or need assistance, please don't hesitate to contact our customer support team.</p>
+      
+      ${emailComponents.button(
+        'Start Shopping',
+        process.env.FRONTEND_URL,
+        EMAIL_STYLES.colors.primary
+      )}
+      
+      <div style="margin-top: ${EMAIL_STYLES.spacing.large}; font-size: 14px; color: ${EMAIL_STYLES.colors.lightText};">
+        <p>If you did not register for this account, please ignore this email.</p>
       </div>
-    `
-  };
+    `;
 
-  return sendMail(mailOptions);
+    const mailOptions = {
+      from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'noreply@icedeluxewears.com'}>`,
+      to: user.email,
+      subject: 'Welcome to Ice Deluxe Wears',
+      html: baseEmailTemplate(
+        content,
+        'Welcome to Ice Deluxe Wears!',
+        'Your fashion journey begins here',
+        EMAIL_STYLES.colors.primary
+      )
+    };
+
+    return await sendMail(mailOptions);
+  } catch (error) {
+    console.error('Error sending welcome email:', error);
+    throw error;
+  }
 };
 
 /**
@@ -48,80 +73,60 @@ const sendWelcomeEmail = async (user) => {
  * @returns {Promise}
  */
 const sendOrderConfirmationEmail = async (order, user) => {
-  // Generate order items HTML
-  const orderItemsHtml = order.items.map(item => {
-    return `
-      <tr>
-        <td style="padding: 10px; border-bottom: 1px solid #eee;">${item.product.name}</td>
-        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">${item.quantity}</td>
-        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">$${item.price.toFixed(2)}</td>
-        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">$${(item.price * item.quantity).toFixed(2)}</td>
-      </tr>
-    `;
-  }).join('');
-
-  const mailOptions = {
-    from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'orders@icedeluxewears.com'}>`,
-    to: user.email,
-    subject: `Order Confirmation #${order.orderNumber}`,
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <div style="background-color: #f8f9fa; padding: 20px; text-align: center;">
-          <h1 style="color: #333;">Your Order Confirmation</h1>
-          <p style="font-size: 18px;">Order #${order.orderNumber}</p>
-        </div>
-        <div style="padding: 20px;">
-          <p>Hello ${user.name},</p>
-          <p>Thank you for your order! We're processing it now and will let you know when it ships.</p>
-          
-          <h3>Order Summary</h3>
-          <table style="width: 100%; border-collapse: collapse;">
-            <thead>
-              <tr style="background-color: #f8f9fa;">
-                <th style="padding: 10px; text-align: left;">Product</th>
-                <th style="padding: 10px; text-align: center;">Quantity</th>
-                <th style="padding: 10px; text-align: right;">Price</th>
-                <th style="padding: 10px; text-align: right;">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${orderItemsHtml}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colspan="3" style="padding: 10px; text-align: right; font-weight: bold;">Subtotal:</td>
-                <td style="padding: 10px; text-align: right;">$${order.totalAmount.toFixed(2)}</td>
-              </tr>
-              <tr>
-                <td colspan="3" style="padding: 10px; text-align: right; font-weight: bold;">Total:</td>
-                <td style="padding: 10px; text-align: right; font-weight: bold;">$${order.totalAmount.toFixed(2)}</td>
-              </tr>
-            </tfoot>
-          </table>
-          
-          <h3>Shipping Address</h3>
-          <p>
-            ${order.shippingAddress.street}<br>
-            ${order.shippingAddress.city}, ${order.shippingAddress.state} ${order.shippingAddress.zipCode}<br>
-            ${order.shippingAddress.country}
-          </p>
-          
-          <h3>Payment Method</h3>
-          <p>${order.paymentMethod === 'paystack' ? 'Paystack' : order.paymentMethod}</p>
-          
-          <div style="margin-top: 30px;">
-            <a href="${process.env.FRONTEND_URL}/orders/${order._id}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;">View Order Details</a>
-          </div>
-        </div>
-        <div style="background-color: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 12px;">
-          <p>u00a9 ${new Date().getFullYear()} Ice Deluxe Wears. All rights reserved.</p>
-          <p>If you have any questions, please contact our customer support.</p>
-        </div>
+  try {
+    const orderItemsRows = generateOrderItemsRows(order.items);
+    
+    const content = `
+      <p>Hello ${user.name},</p>
+      <p>Thank you for your order! We're processing it now and will let you know when it ships.</p>
+      
+      <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Order Summary</h3>
+      ${emailComponents.table(
+        ['Product', 'Qty', 'Price', 'Total'],
+        orderItemsRows
+      )}
+      
+      <div style="margin: ${EMAIL_STYLES.spacing.medium} 0;">
+        <p><strong>Subtotal:</strong> ₦${order.totalAmount.toFixed(2)}</p>
+        <p><strong>Total:</strong> ₦${order.totalAmount.toFixed(2)}</p>
       </div>
-    `
-  };
+      
+      <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Shipping Address</h3>
+      <div style="background-color: ${EMAIL_STYLES.colors.lightBg}; padding: ${EMAIL_STYLES.spacing.small}; border-radius: ${EMAIL_STYLES.borderRadius};">
+        <p>
+          ${order.shippingAddress.street}<br>
+          ${order.shippingAddress.city}, ${order.shippingAddress.state} ${order.shippingAddress.zipCode}<br>
+          ${order.shippingAddress.country}
+        </p>
+      </div>
+      
+      <h3 style="color: ${EMAIL_STYLES.colors.darkText}; margin-top: ${EMAIL_STYLES.spacing.medium};">Payment Method</h3>
+      <p>${order.paymentMethod === 'paystack' ? 'Paystack' : order.paymentMethod}</p>
+      
+      ${emailComponents.button(
+        'View Order Details',
+        `${process.env.FRONTEND_URL}/orders/${order._id}`,
+        EMAIL_STYLES.colors.primary
+      )}
+    `;
 
-  return sendMail(mailOptions);
+    const mailOptions = {
+      from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'orders@icedeluxewears.com'}>`,
+      to: user.email,
+      subject: `Order Confirmation #${order.orderNumber}`,
+      html: baseEmailTemplate(
+        content,
+        'Your Order Confirmation',
+        `Order #${order.orderNumber}`,
+        EMAIL_STYLES.colors.success
+      )
+    };
+
+    return await sendMail(mailOptions);
+  } catch (error) {
+    console.error('Error sending order confirmation email:', error);
+    throw error;
+  }
 };
 
 /**
@@ -131,79 +136,70 @@ const sendOrderConfirmationEmail = async (order, user) => {
  * @returns {Promise}
  */
 const sendNewOrderAdminNotification = async (order, user) => {
-  // Generate order items HTML
-  const orderItemsHtml = order.items.map(item => {
-    return `
-      <tr>
-        <td style="padding: 10px; border-bottom: 1px solid #eee;">${item.product.name}</td>
-        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">${item.quantity}</td>
-        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">$${item.price.toFixed(2)}</td>
-        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">$${(item.price * item.quantity).toFixed(2)}</td>
-      </tr>
-    `;
-  }).join('');
-
-  const mailOptions = {
-    from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'orders@icedeluxewears.com'}>`,
-    to: process.env.ADMIN_EMAIL || 'admin@icedeluxewears.com',
-    subject: `New Order #${order.orderNumber}`,
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <div style="background-color: #f8f9fa; padding: 20px; text-align: center;">
-          <h1 style="color: #333;">New Order Received</h1>
-          <p style="font-size: 18px;">Order #${order.orderNumber}</p>
-        </div>
-        <div style="padding: 20px;">
-          <p>A new order has been placed by ${user.name} (${user.email}).</p>
-          
-          <h3>Order Summary</h3>
-          <table style="width: 100%; border-collapse: collapse;">
-            <thead>
-              <tr style="background-color: #f8f9fa;">
-                <th style="padding: 10px; text-align: left;">Product</th>
-                <th style="padding: 10px; text-align: center;">Quantity</th>
-                <th style="padding: 10px; text-align: right;">Price</th>
-                <th style="padding: 10px; text-align: right;">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${orderItemsHtml}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colspan="3" style="padding: 10px; text-align: right; font-weight: bold;">Total:</td>
-                <td style="padding: 10px; text-align: right; font-weight: bold;">$${order.totalAmount.toFixed(2)}</td>
-              </tr>
-            </tfoot>
-          </table>
-          
-          <h3>Customer Details</h3>
-          <p>
-            <strong>Name:</strong> ${user.name}<br>
-            <strong>Email:</strong> ${user.email}<br>
-            <strong>Phone:</strong> ${user.phone || 'N/A'}
-          </p>
-          
-          <h3>Shipping Address</h3>
-          <p>
-            ${order.shippingAddress.street}<br>
-            ${order.shippingAddress.city}, ${order.shippingAddress.state} ${order.shippingAddress.zipCode}<br>
-            ${order.shippingAddress.country}
-          </p>
-          
-          <h3>Payment Method</h3>
-          <p>${order.paymentMethod === 'paystack' ? 'Paystack' : order.paymentMethod}</p>
-          <p><strong>Payment Status:</strong> ${order.paymentStatus}</p>
-          
-          <div style="margin-top: 30px;">
-            <a href="${process.env.FRONTEND_URL}/admin/orders/${order._id}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;">View Order Details</a>
-          </div>
-        </div>
+  try {
+    const orderItemsRows = generateOrderItemsRows(order.items);
+    
+    const content = `
+      <p>A new order has been placed by ${user.name} (${user.email}).</p>
+      
+      <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Order Summary</h3>
+      ${emailComponents.table(
+        ['Product', 'Qty', 'Price', 'Total'],
+        orderItemsRows
+      )}
+      
+      <div style="margin: ${EMAIL_STYLES.spacing.medium} 0;">
+        <p><strong>Total:</strong> ₦${order.totalAmount.toFixed(2)}</p>
       </div>
-    `
-  };
+      
+      <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Customer Details</h3>
+      <div style="background-color: ${EMAIL_STYLES.colors.lightBg}; padding: ${EMAIL_STYLES.spacing.small}; border-radius: ${EMAIL_STYLES.borderRadius};">
+        <p>
+          <strong>Name:</strong> ${user.name}<br>
+          <strong>Email:</strong> ${user.email}<br>
+          <strong>Phone:</strong> ${user.phone || 'N/A'}
+        </p>
+      </div>
+      
+      <h3 style="color: ${EMAIL_STYLES.colors.darkText}; margin-top: ${EMAIL_STYLES.spacing.medium};">Shipping Address</h3>
+      <div style="background-color: ${EMAIL_STYLES.colors.lightBg}; padding: ${EMAIL_STYLES.spacing.small}; border-radius: ${EMAIL_STYLES.borderRadius};">
+        <p>
+          ${order.shippingAddress.street}<br>
+          ${order.shippingAddress.city}, ${order.shippingAddress.state} ${order.shippingAddress.zipCode}<br>
+          ${order.shippingAddress.country}
+        </p>
+      </div>
+      
+      <h3 style="color: ${EMAIL_STYLES.colors.darkText}; margin-top: ${EMAIL_STYLES.spacing.medium};">Payment Details</h3>
+      <div style="background-color: ${EMAIL_STYLES.colors.lightBg}; padding: ${EMAIL_STYLES.spacing.small}; border-radius: ${EMAIL_STYLES.borderRadius};">
+        <p><strong>Method:</strong> ${order.paymentMethod === 'paystack' ? 'Paystack' : order.paymentMethod}</p>
+        <p><strong>Status:</strong> ${order.paymentStatus}</p>
+      </div>
+      
+      ${emailComponents.button(
+        'View Order Details',
+        `${process.env.FRONTEND_URL}/admin/orders/${order._id}`,
+        EMAIL_STYLES.colors.primary
+      )}
+    `;
 
-  return sendMail(mailOptions);
+    const mailOptions = {
+      from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'orders@icedeluxewears.com'}>`,
+      to: process.env.ADMIN_EMAIL || 'info@icedeluxewears.com',
+      subject: `New Order #${order.orderNumber}`,
+      html: baseEmailTemplate(
+        content,
+        'New Order Received',
+        `Order #${order.orderNumber}`,
+        EMAIL_STYLES.colors.success
+      )
+    };
+
+    return await sendMail(mailOptions);
+  } catch (error) {
+    console.error('Error sending new order admin notification:', error);
+    throw error;
+  }
 };
 
 /**
@@ -213,61 +209,76 @@ const sendNewOrderAdminNotification = async (order, user) => {
  * @returns {Promise}
  */
 const sendOrderStatusUpdateEmail = async (order, user) => {
-  // Get status message based on order status
-  let statusMessage = '';
-  let statusTitle = '';
-  
-  switch(order.status) {
-    case 'processing':
-      statusTitle = 'Your Order is Being Processed';
-      statusMessage = 'We\'re preparing your items for shipment.';
-      break;
-    case 'shipped':
-      statusTitle = 'Your Order Has Been Shipped';
-      statusMessage = 'Your order is on its way to you!';
-      break;
-    case 'delivered':
-      statusTitle = 'Your Order Has Been Delivered';
-      statusMessage = 'Your order has been delivered. We hope you enjoy your purchase!';
-      break;
-    case 'cancelled':
-      statusTitle = 'Your Order Has Been Cancelled';
-      statusMessage = 'Your order has been cancelled. If you have any questions, please contact our customer support.';
-      break;
-    default:
-      statusTitle = 'Order Status Update';
-      statusMessage = 'There has been an update to your order.';
-  }
-  
-  const mailOptions = {
-    from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'orders@icedeluxewears.com'}>`,
-    to: user.email,
-    subject: `${statusTitle} - Order #${order.orderNumber}`,
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <div style="background-color: #f8f9fa; padding: 20px; text-align: center;">
-          <h1 style="color: #333;">${statusTitle}</h1>
-          <p style="font-size: 18px;">Order #${order.orderNumber}</p>
-        </div>
-        <div style="padding: 20px;">
-          <p>Hello ${user.name},</p>
-          <p>${statusMessage}</p>
-          
-          <h3>Order Status: ${order.status.charAt(0).toUpperCase() + order.status.slice(1)}</h3>
-          
-          <div style="margin-top: 30px;">
-            <a href="${process.env.FRONTEND_URL}/orders/${order._id}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;">View Order Details</a>
-          </div>
-        </div>
-        <div style="background-color: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 12px;">
-          <p>u00a9 ${new Date().getFullYear()} Ice Deluxe Wears. All rights reserved.</p>
-          <p>If you have any questions, please contact our customer support.</p>
-        </div>
-      </div>
-    `
-  };
+  try {
+    // Get status message based on order status
+    const statusConfig = {
+      processing: {
+        title: 'Your Order is Being Processed',
+        message: 'We\'re preparing your items for shipment.',
+        color: EMAIL_STYLES.colors.primary
+      },
+      shipped: {
+        title: 'Your Order Has Been Shipped',
+        message: 'Your order is on its way to you!',
+        color: EMAIL_STYLES.colors.success
+      },
+      delivered: {
+        title: 'Your Order Has Been Delivered',
+        message: 'Your order has been delivered. We hope you enjoy your purchase!',
+        color: EMAIL_STYLES.colors.success
+      },
+      cancelled: {
+        title: 'Your Order Has Been Cancelled',
+        message: 'Your order has been cancelled. If you have any questions, please contact our customer support.',
+        color: EMAIL_STYLES.colors.danger
+      }
+    };
 
-  return sendMail(mailOptions);
+    const { title, message, color } = statusConfig[order.status] || {
+      title: 'Order Status Update',
+      message: 'There has been an update to your order.',
+      color: EMAIL_STYLES.colors.primary
+    };
+
+    const formattedStatus = order.status.charAt(0).toUpperCase() + order.status.slice(1);
+
+    const content = `
+      <p>Hello ${user.name},</p>
+      <p>${message}</p>
+      
+      ${emailComponents.alertBox(
+        `<h3 style="margin-top: 0; color: ${color};">Order Status: ${formattedStatus}</h3>`,
+        order.status === 'cancelled' ? 'danger' : 'success'
+      )}
+      
+      ${emailComponents.button(
+        'View Order Details',
+        `${process.env.FRONTEND_URL}/orders/${order._id}`,
+        color
+      )}
+      
+      <div style="margin-top: ${EMAIL_STYLES.spacing.large}; font-size: 14px; color: ${EMAIL_STYLES.colors.lightText};">
+        <p>If you have any questions, please contact our customer support.</p>
+      </div>
+    `;
+
+    const mailOptions = {
+      from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'orders@icedeluxewears.com'}>`,
+      to: user.email,
+      subject: `${title} - Order #${order.orderNumber}`,
+      html: baseEmailTemplate(
+        content,
+        title,
+        `Order #${order.orderNumber}`,
+        color
+      )
+    };
+
+    return await sendMail(mailOptions);
+  } catch (error) {
+    console.error('Error sending order status update email:', error);
+    throw error;
+  }
 };
 
 module.exports = {

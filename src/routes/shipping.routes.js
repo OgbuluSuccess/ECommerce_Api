@@ -777,4 +777,72 @@ router.put('/admin/settings', protect, restrictTo('admin'), async (req, res) => 
   }
 });
 
+/**
+ * @swagger
+ * /shipping/states:
+ *   get:
+ *     summary: Get all Nigerian states from existing shipping zones
+ *     tags: [Shipping]
+ *     responses:
+ *       200:
+ *         description: List of Nigerian state names from shipping zones for dropdown mapping
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: string
+ */
+router.get('/states', async (req, res) => {
+  try {
+    // Get all active shipping zones
+    const zones = await ShippingZone.find({ isActive: true });
+    
+    if (zones.length === 0) {
+      return res.status(200).json([]);
+    }
+    
+    // List of Nigerian states
+    const nigerianStates = [
+      'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno', 'Cross River',
+      'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT', 'Gombe', 'Imo', 'Jigawa', 'Kaduna', 'Kano',
+      'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun',
+      'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara'
+    ];
+    
+    // Extract areas from each zone and filter to include only Nigerian states
+    const stateNames = [];
+    
+    zones.forEach(zone => {
+      if (zone.areas && Array.isArray(zone.areas)) {
+        zone.areas.forEach(area => {
+          const trimmedArea = area.trim();
+          // Check if the area is a Nigerian state
+          const isState = nigerianStates.some(state => {
+            // Case insensitive comparison
+            return trimmedArea.toLowerCase() === state.toLowerCase() ||
+                  // Special case for Abuja/FCT
+                  (trimmedArea.toLowerCase() === 'abuja' && state === 'FCT');
+          });
+          
+          if (isState) {
+            // Normalize 'Abuja' to 'FCT'
+            const normalizedState = trimmedArea.toLowerCase() === 'abuja' ? 'FCT' : trimmedArea;
+            stateNames.push(normalizedState);
+          }
+        });
+      }
+    });
+    
+    // Remove duplicates and sort alphabetically
+    const uniqueStates = [...new Set(stateNames)].sort();
+    
+    // Return just the array of state names for direct dropdown mapping
+    res.status(200).json(uniqueStates);
+  } catch (error) {
+    console.error('Error fetching states:', error);
+    res.status(500).json([]);
+  }
+});
+
 module.exports = router;
