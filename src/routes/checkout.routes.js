@@ -56,14 +56,19 @@ console.log('Paystack response:', response.body);
       order.paymentStatus = 'completed';
       order.status = 'processing';
       
-      // Update product stock
+      // Update product stock and collect product names
+      const productNames = [];
       for (const item of order.items) {
         const product = await Product.findById(item.product);
         if (product) {
           product.stock -= item.quantity;
           await product.save();
+          productNames.push(product.name);
         }
       }
+      
+      // Store product names in order for easy access
+      order.productNames = productNames.join(', ');
     } else {
       order.paymentStatus = 'failed';
     }
@@ -108,12 +113,20 @@ console.log('Paystack response:', response.body);
       }
     }
 
+    // Get product names from the order or generate them if needed
+    const productNames = order.productNames || order.items.map(item => {
+      // Try to get the product name from the populated product or from the item itself
+      return (item.product && typeof item.product === 'object' && item.product.name) || item.name || 'Product';
+    }).join(', ');
+    
     res.status(200).json({
       success: true,
       message: 'Payment verification completed',
       data: {
         paymentStatus: order.paymentStatus,
         orderStatus: order.status,
+        productNames: productNames,
+        totalAmount: order.totalAmount || 0,
         order: order
       }
     });
@@ -267,11 +280,17 @@ router.post('/webhook/paystack', async (req, res) => {
  *                 type: string
  *                 description: ID of the shipping zone or 'pickup' for store pickup
  *                 example: 60d21b4667d0d8992e610c85
+ *               totalAmount:
+ *                 type: number
+ *                 description: Total amount including products and shipping, calculated by frontend
+ *                 example: 25000
  *     responses:
  *       200:
  *         description: Checkout successful, redirecting to payment
  */
 router.post('/guest', async (req, res) => {
+  console.log('Guest checkout request body:', req.body);
+  console.log('Total amount from request:', req.body.totalAmount);
   try {
     const { 
       firstName, 
@@ -287,7 +306,8 @@ router.post('/guest', async (req, res) => {
       note,
       shippingMethod,
       shippingZoneId,
-      cartItems 
+      cartItems,
+      totalAmount: requestTotalAmount 
     } = req.body;
 
     // Validate required fields
@@ -460,11 +480,14 @@ router.post('/guest', async (req, res) => {
       }
     }
     
+    // Log the total amount for debugging
+    console.log('Using total amount:', requestTotalAmount || totalAmount);
+    
     // Create order
     const order = await Order.create({
       user: user._id,
       items: orderItems,
-      totalAmount: totalAmount + shippingCost,
+      totalAmount: requestTotalAmount || totalAmount, // Use the total amount from request if provided, otherwise use calculated amount
       shippingAddress: {
         street: shippingAddress,
         city,
@@ -502,6 +525,7 @@ router.post('/guest', async (req, res) => {
       callback_url: `${process.env.FRONTEND_URL}/paymentVerify/${order._id}`,
       metadata: {
         order_id: order._id.toString(),
+        total_amount: order.totalAmount,
         custom_fields: [
           {
             display_name: 'Order Number',
@@ -604,7 +628,7 @@ router.post('/guest', async (req, res) => {
  */
 router.post('/user', protect, async (req, res) => {
   try {
-    const { shippingAddress, shippingMethod, shippingZoneId, note } = req.body;
+    const { firstName, lastName, email, phone, shippingAddress, city, state, country, products, shippingMethod, shippingZoneId, totalAmount } = req.body;
 
     // Validate required fields
     if (!shippingAddress || !shippingMethod) {

@@ -22,9 +22,19 @@ const orderSchema = new mongoose.Schema({
       required: true
     }
   }],
+  productAmount: {
+    type: Number,
+    required: true,
+    default: 0
+  },
+  shippingCost: {
+    type: Number,
+    default: 0
+  },
   totalAmount: {
     type: Number,
-    required: true
+    required: true,
+    default: 0
   },
   shippingAddress: {
     street: String,
@@ -77,6 +87,10 @@ const orderSchema = new mongoose.Schema({
       type: String,
       default: 'paystack'
     }
+  },
+  productNames: {
+    type: String,
+    default: ''
   },
   orderNumber: {
     type: String,

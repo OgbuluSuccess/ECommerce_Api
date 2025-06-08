@@ -20,6 +20,7 @@ const adminDashboardRoutes = require('./routes/admin.dashboard');
 const adminCustomersRoutes = require('./routes/admin.customers');
 const categoryRoutes = require('./routes/category.routes');
 const shippingRoutes = require('./routes/shipping.routes');
+const testEmailRoutes = require('./routes/test-email.routes');
 
 const app = express();
 
@@ -163,6 +164,7 @@ app.use('/admin/dashboard', adminDashboardRoutes);
 app.use('/admin/customers', adminCustomersRoutes);
 app.use('/categories', categoryRoutes);
 app.use('/shipping', shippingRoutes);
+app.use('/test', testEmailRoutes);
 
 // Swagger Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
