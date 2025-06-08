@@ -7,12 +7,26 @@ const { EMAIL_STYLES, emailComponents, baseEmailTemplate } = require('./emailTem
  * @returns {Array} Formatted table rows
  */
 const generateOrderItemsRows = (items) => {
-  return items.map(item => ([
-    { content: item.product.name },
-    { content: item.quantity, align: 'center' },
-    { content: `₦${item.price.toFixed(2)}`, align: 'right' },
-    { content: `₦${(item.price * item.quantity).toFixed(2)}`, align: 'right' }
-  ]));
+  return items.map(item => {
+    // Handle both populated and non-populated product objects
+    let productName = 'Product';
+    
+    // If product is populated as an object
+    if (item.product && typeof item.product === 'object' && item.product.name) {
+      productName = item.product.name;
+    } 
+    // If product name is directly on the item
+    else if (item.name) {
+      productName = item.name;
+    }
+    
+    return [
+      { content: productName },
+      { content: item.quantity, align: 'center' },
+      { content: `₦${item.price.toFixed(2)}`, align: 'right' },
+      { content: `₦${(item.price * item.quantity).toFixed(2)}`, align: 'right' }
+    ];
+  });
 };
 
 /**
@@ -51,6 +65,12 @@ const sendWelcomeEmail = async (user) => {
       from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'noreply@icedeluxewears.com'}>`,
       to: user.email,
       subject: 'Welcome to Ice Deluxe Wears',
+      headers: {
+        'X-Priority': '1',
+        'Importance': 'high',
+        'X-MSMail-Priority': 'High',
+        'X-Mailer': 'Ice Deluxe Wears Mailer',
+      },
       html: baseEmailTemplate(
         content,
         'Welcome to Ice Deluxe Wears!',
@@ -91,29 +111,37 @@ const sendOrderConfirmationEmail = async (order, user) => {
         <p><strong>Total:</strong> ₦${order.totalAmount.toFixed(2)}</p>
       </div>
       
-      <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Shipping Address</h3>
+      <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Shipping Information</h3>
       <div style="background-color: ${EMAIL_STYLES.colors.lightBg}; padding: ${EMAIL_STYLES.spacing.small}; border-radius: ${EMAIL_STYLES.borderRadius};">
         <p>
+          <strong>Address:</strong><br>
           ${order.shippingAddress.street}<br>
           ${order.shippingAddress.city}, ${order.shippingAddress.state} ${order.shippingAddress.zipCode}<br>
           ${order.shippingAddress.country}
         </p>
+        <p>
+          <strong>Shipping Zone:</strong> ${order.shipping && order.shipping.method === 'pickup' ? 'Store Pickup' : 
+            (order.shipping && order.shipping.zone && order.shipping.zone.name ? order.shipping.zone.name : 'Standard Shipping')}
+        </p>
+        ${order.shipping && order.shipping.estimatedDeliveryTime ? 
+          `<p><strong>Estimated Delivery:</strong> ${order.shipping.estimatedDeliveryTime}</p>` : ''}
       </div>
       
       <h3 style="color: ${EMAIL_STYLES.colors.darkText}; margin-top: ${EMAIL_STYLES.spacing.medium};">Payment Method</h3>
       <p>${order.paymentMethod === 'paystack' ? 'Paystack' : order.paymentMethod}</p>
       
-      ${emailComponents.button(
-        'View Order Details',
-        `${process.env.FRONTEND_URL}/orders/${order._id}`,
-        EMAIL_STYLES.colors.primary
-      )}
     `;
 
     const mailOptions = {
       from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'orders@icedeluxewears.com'}>`,
       to: user.email,
       subject: `Order Confirmation #${order.orderNumber}`,
+      headers: {
+        'X-Priority': '1',
+        'Importance': 'high',
+        'X-MSMail-Priority': 'High',
+        'X-Mailer': 'Ice Deluxe Wears Mailer',
+      },
       html: baseEmailTemplate(
         content,
         'Your Order Confirmation',
@@ -161,13 +189,22 @@ const sendNewOrderAdminNotification = async (order, user) => {
         </p>
       </div>
       
-      <h3 style="color: ${EMAIL_STYLES.colors.darkText}; margin-top: ${EMAIL_STYLES.spacing.medium};">Shipping Address</h3>
+      <h3 style="color: ${EMAIL_STYLES.colors.darkText}; margin-top: ${EMAIL_STYLES.spacing.medium};">Shipping Information</h3>
       <div style="background-color: ${EMAIL_STYLES.colors.lightBg}; padding: ${EMAIL_STYLES.spacing.small}; border-radius: ${EMAIL_STYLES.borderRadius};">
         <p>
+          <strong>Address:</strong><br>
           ${order.shippingAddress.street}<br>
           ${order.shippingAddress.city}, ${order.shippingAddress.state} ${order.shippingAddress.zipCode}<br>
           ${order.shippingAddress.country}
         </p>
+        <p>
+          <strong>Shipping Zone:</strong> ${order.shipping && order.shipping.method === 'pickup' ? 'Store Pickup' : 
+            (order.shipping && order.shipping.zone && order.shipping.zone.name ? order.shipping.zone.name : 'Standard Shipping')}
+        </p>
+        ${order.shipping && order.shipping.estimatedDeliveryTime ? 
+          `<p><strong>Estimated Delivery:</strong> ${order.shipping.estimatedDeliveryTime}</p>` : ''}
+        ${order.shipping && order.shipping.cost ? 
+          `<p><strong>Shipping Cost:</strong> ₦${order.shipping.cost.toFixed(2)}</p>` : ''}
       </div>
       
       <h3 style="color: ${EMAIL_STYLES.colors.darkText}; margin-top: ${EMAIL_STYLES.spacing.medium};">Payment Details</h3>
@@ -187,6 +224,12 @@ const sendNewOrderAdminNotification = async (order, user) => {
       from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'orders@icedeluxewears.com'}>`,
       to: process.env.ADMIN_EMAIL || 'info@icedeluxewears.com',
       subject: `New Order #${order.orderNumber}`,
+      headers: {
+        'X-Priority': '1',
+        'Importance': 'high',
+        'X-MSMail-Priority': 'High',
+        'X-Mailer': 'Ice Deluxe Wears Mailer',
+      },
       html: baseEmailTemplate(
         content,
         'New Order Received',
@@ -251,12 +294,6 @@ const sendOrderStatusUpdateEmail = async (order, user) => {
         order.status === 'cancelled' ? 'danger' : 'success'
       )}
       
-      ${emailComponents.button(
-        'View Order Details',
-        `${process.env.FRONTEND_URL}/orders/${order._id}`,
-        color
-      )}
-      
       <div style="margin-top: ${EMAIL_STYLES.spacing.large}; font-size: 14px; color: ${EMAIL_STYLES.colors.lightText};">
         <p>If you have any questions, please contact our customer support.</p>
       </div>
@@ -266,6 +303,12 @@ const sendOrderStatusUpdateEmail = async (order, user) => {
       from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'orders@icedeluxewears.com'}>`,
       to: user.email,
       subject: `${title} - Order #${order.orderNumber}`,
+      headers: {
+        'X-Priority': '1',
+        'Importance': 'high',
+        'X-MSMail-Priority': 'High',
+        'X-Mailer': 'Ice Deluxe Wears Mailer',
+      },
       html: baseEmailTemplate(
         content,
         title,
