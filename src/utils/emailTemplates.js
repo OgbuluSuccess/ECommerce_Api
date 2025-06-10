@@ -303,7 +303,7 @@ const baseEmailTemplate = (content, title, subtitle = '', headerColor = EMAIL_ST
               <a href="${process.env.FRONTEND_URL}/terms-of-service" style="color: ${EMAIL_STYLES.colors.primary}; text-decoration: none;">Terms of Service</a>
             </p>
             <p>
-              Ice Deluxe Wears, Lagos, Nigeria
+              Ice Deluxe Wears, Abuja, Nigeria
             </p>
           </div>
         </div>
