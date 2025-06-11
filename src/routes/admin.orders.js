@@ -106,16 +106,19 @@ router.get('/', protect, restrictTo('admin', 'superadmin'), async (req, res) => 
     const { 
       status, 
       page = 1, 
-      limit = 10, 
+      limit, 
       sort = '-createdAt',
       search,
       dateRange
     } = req.query;
+    
+    // If no limit is specified, we'll set it to a very high number to get all orders
+    const parsedLimit = limit ? parseInt(limit) : null;
 
-    // Build query
+    // Build query - empty query will return all orders
     const query = {};
     
-    // Status filter
+    // Status filter - only apply if status is provided and not 'all'
     if (status && status !== 'all') {
       query.status = status;
     }
@@ -154,11 +157,18 @@ router.get('/', protect, restrictTo('admin', 'superadmin'), async (req, res) => 
     const total = await Order.countDocuments(query);
     
     // Execute query with pagination and sorting
-    const orders = await Order.find(query)
+    let ordersQuery = Order.find(query)
       .populate('user', 'name email phone')
-      .sort(sort)
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit));
+      .sort(sort);
+      
+    // Only apply pagination if a limit is specified
+    if (parsedLimit) {
+      ordersQuery = ordersQuery
+        .skip((page - 1) * parsedLimit)
+        .limit(parsedLimit);
+    }
+    
+    const orders = await ordersQuery;
 
     // Get order statistics
     const pendingCount = await Order.countDocuments({ status: 'pending' });

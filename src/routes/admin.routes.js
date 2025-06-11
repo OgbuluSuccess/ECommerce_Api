@@ -10,7 +10,7 @@ const bcrypt = require('bcryptjs');
  * @swagger
  * /admin/users:
  *   post:
- *     summary: Create a new user (admin only)
+ *     summary: Create a new user
  *     tags: [Admin]
  *     
  *     requestBody:
@@ -105,10 +105,13 @@ const bcrypt = require('bcryptjs');
  *             properties:
  *               role:
  *                 type: string
- *                 enum: [user, admin]
+ *                 enum: [user, admin, superadmin]
+ *                 description: Note - Only superadmins can assign the superadmin role
  *     responses:
  *       200:
  *         description: User role updated successfully
+ *       403:
+ *         description: Not authorized. Only superadmins can assign the superadmin role
  */
 
 /**
@@ -137,7 +140,7 @@ const bcrypt = require('bcryptjs');
  *         description: Inventory statistics retrieved successfully
  */
 
-// Create new user (admin only) - Public endpoint
+// Create new user - Public endpoint
 router.post('/users', async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
@@ -249,6 +252,29 @@ router.patch('/users/:id', protect, restrictTo('admin', 'superadmin'), async (re
   }
 });
 
+/**
+ * @swagger
+ * /admin/users/{id}:
+ *   delete:
+ *     summary: Delete a user (Superadmin only)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: User ID
+ *     responses:
+ *       200:
+ *         description: User deleted successfully
+ *       403:
+ *         description: Not authorized. Only superadmin can delete users
+ *       404:
+ *         description: User not found
+ */
 // Delete user (Superadmin only)
 router.delete('/users/:id', protect, restrictTo('superadmin'), async (req, res) => {
   try {
