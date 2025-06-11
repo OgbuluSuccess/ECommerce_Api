@@ -538,7 +538,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', protect, restrictTo('admin'), upload.array('images', 5), async (req, res) => {
+router.post('/', protect, restrictTo('admin', 'superadmin'), upload.array('images', 5), async (req, res) => {
   try {
     const productData = req.body;
     productData.images = [];
@@ -635,7 +635,7 @@ router.post('/', protect, restrictTo('admin'), upload.array('images', 5), async 
  *       404:
  *         description: Product not found
  */
-router.patch('/:id', protect, restrictTo('admin'), upload.array('images', 5), async (req, res) => {
+router.patch('/:id', protect, restrictTo('admin', 'superadmin'), upload.array('images', 5), async (req, res) => {
   try {
     // First find the existing product
     const existingProduct = await Product.findById(req.params.id);
@@ -720,7 +720,7 @@ router.patch('/:id', protect, restrictTo('admin'), upload.array('images', 5), as
 });
 
 // Delete product (Admin only)
-router.delete('/:id', protect, restrictTo('admin'), async (req, res) => {
+router.delete('/:id', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
     if (!product) {

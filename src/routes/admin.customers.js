@@ -43,7 +43,7 @@ const { protect, restrictTo } = require('../middleware/auth.middleware');
  *       200:
  *         description: List of customers
  */
-router.get('/', protect, restrictTo('admin'), async (req, res) => {
+router.get('/', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const { 
       status, 
@@ -162,7 +162,7 @@ router.get('/', protect, restrictTo('admin'), async (req, res) => {
  *       200:
  *         description: Customer details
  */
-router.get('/:id', protect, restrictTo('admin'), async (req, res) => {
+router.get('/:id', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const customer = await User.findById(req.params.id).select('-password');
 
@@ -234,7 +234,7 @@ router.get('/:id', protect, restrictTo('admin'), async (req, res) => {
  *       200:
  *         description: Customer status updated successfully
  */
-router.patch('/:id/status', protect, restrictTo('admin'), async (req, res) => {
+router.patch('/:id/status', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const { status } = req.body;
     

@@ -171,7 +171,7 @@ router.get('/:id', protect, async (req, res) => {
 });
 
 // Update order status (Admin only)
-router.patch('/:id', protect, restrictTo('admin'), async (req, res) => {
+router.patch('/:id', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const { status, trackingInfo } = req.body;
 
@@ -255,7 +255,7 @@ router.patch('/:id', protect, restrictTo('admin'), async (req, res) => {
 });
 
 // Get all orders (Admin only)
-router.get('/', protect, restrictTo('admin'), async (req, res) => {
+router.get('/', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const orders = await Order.find()
       .populate('user', 'name email')

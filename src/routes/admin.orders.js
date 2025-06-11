@@ -7,6 +7,64 @@ const { protect, restrictTo } = require('../middleware/auth.middleware');
 
 /**
  * @swagger
+ * /admin/orders/enums:
+ *   get:
+ *     summary: Get order status and payment status enums
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Order status and payment status enums
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     orderStatuses:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                     paymentStatuses:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                     paymentMethods:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ */
+router.get('/enums', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
+  try {
+    // Get the enum values directly from the Mongoose schema
+    const orderStatuses = Order.schema.path('status').enumValues;
+    const paymentStatuses = Order.schema.path('paymentStatus').enumValues;
+    const paymentMethods = Order.schema.path('paymentMethod').enumValues;
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        orderStatuses,
+        paymentStatuses,
+        paymentMethods
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching enums:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @swagger
  * /admin/orders:
  *   get:
  *     summary: Get all orders with filtering and pagination
@@ -43,7 +101,7 @@ const { protect, restrictTo } = require('../middleware/auth.middleware');
  *       200:
  *         description: List of orders
  */
-router.get('/', protect, restrictTo('admin'), async (req, res) => {
+router.get('/', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const { 
       status, 
@@ -170,7 +228,7 @@ router.get('/', protect, restrictTo('admin'), async (req, res) => {
  *       200:
  *         description: Order details
  */
-router.get('/:id', protect, restrictTo('admin'), async (req, res) => {
+router.get('/:id', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
       .populate('user', 'name email phone')
@@ -199,7 +257,7 @@ router.get('/:id', protect, restrictTo('admin'), async (req, res) => {
  * @swagger
  * /admin/orders/{id}/status:
  *   patch:
- *     summary: Update order status
+ *     summary: Update order status (Superadmin only)
  *     tags: [Admin]
  *     security:
  *       - bearerAuth: []
@@ -222,8 +280,10 @@ router.get('/:id', protect, restrictTo('admin'), async (req, res) => {
  *     responses:
  *       200:
  *         description: Order status updated successfully
+ *       403:
+ *         description: Access denied. Only superadmin can update order status.
  */
-router.patch('/:id/status', protect, restrictTo('admin'), async (req, res) => {
+router.patch('/:id/status', protect, restrictTo('superadmin'), async (req, res) => {
   try {
     const { status } = req.body;
     
@@ -264,6 +324,89 @@ router.patch('/:id/status', protect, restrictTo('admin'), async (req, res) => {
     res.status(200).json({
       success: true,
       message: `Order status updated to ${status}`,
+      data: order
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /admin/orders/{id}/payment-status:
+ *   patch:
+ *     summary: Update order payment status (Superadmin only)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               paymentStatus:
+ *                 type: string
+ *                 enum: [pending, completed, failed]
+ *     responses:
+ *       200:
+ *         description: Order payment status updated successfully
+ *       403:
+ *         description: Access denied. Only superadmin can update payment status.
+ */
+router.patch('/:id/payment-status', protect, restrictTo('superadmin'), async (req, res) => {
+  try {
+    const { paymentStatus } = req.body;
+    
+    // Validate payment status
+    const validPaymentStatuses = ['pending', 'completed', 'failed'];
+    if (!validPaymentStatuses.includes(paymentStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment status value'
+      });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    // Update order payment status
+    order.paymentStatus = paymentStatus;
+    await order.save();
+
+    // Get user details for email notification
+    const user = await User.findById(order.user);
+
+    // Send payment status update email if payment is completed or failed
+    if (paymentStatus === 'completed' || paymentStatus === 'failed') {
+      try {
+        const { sendOrderStatusUpdateEmail } = require('../utils/email.utils');
+        await sendOrderStatusUpdateEmail(order, user, { paymentStatusUpdated: true });
+        console.log(`Payment status update email sent to ${user.email}`);
+      } catch (emailError) {
+        console.error('Error sending payment status update email:', emailError);
+        // Continue with order update even if email fails
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Order payment status updated to ${paymentStatus}`,
       data: order
     });
   } catch (error) {

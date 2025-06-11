@@ -175,7 +175,7 @@ router.post('/users', async (req, res) => {
 });
 
 // Get all users
-router.get('/users', protect, restrictTo('admin'), async (req, res) => {
+router.get('/users', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const users = await User.find().select('-password');
     res.status(200).json({
@@ -192,7 +192,7 @@ router.get('/users', protect, restrictTo('admin'), async (req, res) => {
 });
 
 // Get user by ID
-router.get('/users/:id', protect, restrictTo('admin'), async (req, res) => {
+router.get('/users/:id', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select('-password');
     if (!user) {
@@ -215,7 +215,7 @@ router.get('/users/:id', protect, restrictTo('admin'), async (req, res) => {
 });
 
 // Update user
-router.patch('/users/:id', protect, restrictTo('admin'), async (req, res) => {
+router.patch('/users/:id', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const updates = { ...req.body };
     
@@ -249,8 +249,8 @@ router.patch('/users/:id', protect, restrictTo('admin'), async (req, res) => {
   }
 });
 
-// Delete user
-router.delete('/users/:id', protect, restrictTo('admin'), async (req, res) => {
+// Delete user (Superadmin only)
+router.delete('/users/:id', protect, restrictTo('superadmin'), async (req, res) => {
   try {
     const user = await User.findByIdAndDelete(req.params.id);
     if (!user) {
@@ -274,7 +274,7 @@ router.delete('/users/:id', protect, restrictTo('admin'), async (req, res) => {
 
 
 // Get dashboard statistics
-router.get('/dashboard', protect, restrictTo('admin'), async (req, res) => {
+router.get('/dashboard', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     // Get date range for comparison (current month and previous month)
     const now = new Date();
@@ -401,7 +401,7 @@ router.get('/dashboard', protect, restrictTo('admin'), async (req, res) => {
 });
 
 // Get all users
-router.get('/users', protect, restrictTo('admin'), async (req, res) => {
+router.get('/users', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const users = await User.find().select('-password');
 
@@ -419,9 +419,17 @@ router.get('/users', protect, restrictTo('admin'), async (req, res) => {
 });
 
 // Update user role
-router.patch('/users/:id/role', protect, restrictTo('admin'), async (req, res) => {
+router.patch('/users/:id/role', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const { role } = req.body;
+    
+    // Only superadmin can assign the superadmin role
+    if (role === 'superadmin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only superadmins can assign the superadmin role'
+      });
+    }
 
     const user = await User.findByIdAndUpdate(
       req.params.id,
@@ -449,7 +457,7 @@ router.patch('/users/:id/role', protect, restrictTo('admin'), async (req, res) =
 });
 
 // Get sales statistics
-router.get('/sales', protect, restrictTo('admin'), async (req, res) => {
+router.get('/sales', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 30); // Last 30 days
@@ -562,7 +570,7 @@ router.get('/sales', protect, restrictTo('admin'), async (req, res) => {
 });
 
 // Get inventory statistics
-router.get('/inventory', protect, restrictTo('admin'), async (req, res) => {
+router.get('/inventory', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const inventoryStats = await Product.aggregate([
       {

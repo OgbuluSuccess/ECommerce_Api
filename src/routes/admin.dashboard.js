@@ -17,7 +17,7 @@ const { protect, restrictTo } = require('../middleware/auth.middleware');
  *       200:
  *         description: Dashboard statistics retrieved successfully
  */
-router.get('/', protect, restrictTo('admin'), async (req, res) => {
+router.get('/', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     // Prepare date ranges for calculations
     const now = new Date();
@@ -208,7 +208,7 @@ router.get('/', protect, restrictTo('admin'), async (req, res) => {
  *       200:
  *         description: Sales statistics retrieved successfully
  */
-router.get('/sales', protect, restrictTo('admin'), async (req, res) => {
+router.get('/sales', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const { period = 'monthly' } = req.query;
     const now = new Date();

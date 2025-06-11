@@ -156,7 +156,7 @@ router.get('/:id', async (req, res) => {
  *       403:
  *         description: Admin access required
  */
-router.post('/', protect, restrictTo('admin'), async (req, res) => {
+router.post('/', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const { name, description, parent } = req.body;
     const categoryData = {
@@ -236,7 +236,7 @@ router.post('/', protect, restrictTo('admin'), async (req, res) => {
  *       404:
  *         description: Category not found
  */
-router.patch('/:id', protect, restrictTo('admin'), async (req, res) => {
+router.patch('/:id', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const category = await Category.findByIdAndUpdate(
       req.params.id,
@@ -285,7 +285,7 @@ router.patch('/:id', protect, restrictTo('admin'), async (req, res) => {
  *       404:
  *         description: Category not found
  */
-router.delete('/:id', protect, restrictTo('admin'), async (req, res) => {
+router.delete('/:id', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const category = await Category.findById(req.params.id);
 

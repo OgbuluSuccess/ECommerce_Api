@@ -249,49 +249,91 @@ const sendNewOrderAdminNotification = async (order, user) => {
  * Send order status update email to customer
  * @param {Object} order - Order object with details
  * @param {Object} user - User object with name and email
+ * @param {Object} options - Additional options
+ * @param {Boolean} options.paymentStatusUpdated - Whether payment status was updated
  * @returns {Promise}
  */
-const sendOrderStatusUpdateEmail = async (order, user) => {
+const sendOrderStatusUpdateEmail = async (order, user, options = {}) => {
   try {
-    // Get status message based on order status
-    const statusConfig = {
-      processing: {
-        title: 'Your Order is Being Processed',
-        message: 'We\'re preparing your items for shipment.',
+    // Determine if this is a payment status update or order status update
+    let title, message, color, statusType, statusValue;
+    
+    if (options.paymentStatusUpdated) {
+      // Payment status update configuration
+      const paymentStatusConfig = {
+        completed: {
+          title: 'Payment Confirmed',
+          message: 'We have received your payment for this order.',
+          color: EMAIL_STYLES.colors.success
+        },
+        failed: {
+          title: 'Payment Failed',
+          message: 'There was an issue processing your payment. Please update your payment method.',
+          color: EMAIL_STYLES.colors.danger
+        },
+        pending: {
+          title: 'Payment Pending',
+          message: 'Your payment is being processed.',
+          color: EMAIL_STYLES.colors.primary
+        }
+      };
+      
+      const config = paymentStatusConfig[order.paymentStatus] || {
+        title: 'Payment Status Update',
+        message: 'There has been an update to your payment status.',
         color: EMAIL_STYLES.colors.primary
-      },
-      shipped: {
-        title: 'Your Order Has Been Shipped',
-        message: 'Your order is on its way to you!',
-        color: EMAIL_STYLES.colors.success
-      },
-      delivered: {
-        title: 'Your Order Has Been Delivered',
-        message: 'Your order has been delivered. We hope you enjoy your purchase!',
-        color: EMAIL_STYLES.colors.success
-      },
-      cancelled: {
-        title: 'Your Order Has Been Cancelled',
-        message: 'Your order has been cancelled. If you have any questions, please contact our customer support.',
-        color: EMAIL_STYLES.colors.danger
-      }
-    };
+      };
+      
+      title = config.title;
+      message = config.message;
+      color = config.color;
+      statusType = 'Payment Status';
+      statusValue = order.paymentStatus.charAt(0).toUpperCase() + order.paymentStatus.slice(1);
+    } else {
+      // Order status update configuration
+      const orderStatusConfig = {
+        processing: {
+          title: 'Your Order is Being Processed',
+          message: 'We\'re preparing your items for shipment.',
+          color: EMAIL_STYLES.colors.primary
+        },
+        shipped: {
+          title: 'Your Order Has Been Shipped',
+          message: 'Your order is on its way to you!',
+          color: EMAIL_STYLES.colors.success
+        },
+        delivered: {
+          title: 'Your Order Has Been Delivered',
+          message: 'Your order has been delivered. We hope you enjoy your purchase!',
+          color: EMAIL_STYLES.colors.success
+        },
+        cancelled: {
+          title: 'Your Order Has Been Cancelled',
+          message: 'Your order has been cancelled. If you have any questions, please contact our customer support.',
+          color: EMAIL_STYLES.colors.danger
+        }
+      };
 
-    const { title, message, color } = statusConfig[order.status] || {
-      title: 'Order Status Update',
-      message: 'There has been an update to your order.',
-      color: EMAIL_STYLES.colors.primary
-    };
-
-    const formattedStatus = order.status.charAt(0).toUpperCase() + order.status.slice(1);
+      const config = orderStatusConfig[order.status] || {
+        title: 'Order Status Update',
+        message: 'There has been an update to your order.',
+        color: EMAIL_STYLES.colors.primary
+      };
+      
+      title = config.title;
+      message = config.message;
+      color = config.color;
+      statusType = 'Order Status';
+      statusValue = order.status.charAt(0).toUpperCase() + order.status.slice(1);
+    }
 
     const content = `
       <p>Hello ${user.name},</p>
       <p>${message}</p>
       
       ${emailComponents.alertBox(
-        `<h3 style="margin-top: 0; color: ${color};">Order Status: ${formattedStatus}</h3>`,
-        order.status === 'cancelled' ? 'danger' : 'success'
+        `<h3 style="margin-top: 0; color: ${color};">${statusType}: ${statusValue}</h3>`,
+        (statusValue.toLowerCase() === 'cancelled' || statusValue.toLowerCase() === 'failed') ? 'danger' : 'success'
       )}
       
       <div style="margin-top: ${EMAIL_STYLES.spacing.large}; font-size: 14px; color: ${EMAIL_STYLES.colors.lightText};">

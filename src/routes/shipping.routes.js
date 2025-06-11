@@ -403,7 +403,7 @@ router.get('/settings', async (req, res) => {
  *       200:
  *         description: List of all shipping zones
  */
-router.get('/admin/zones', protect, restrictTo('admin'), async (req, res) => {
+router.get('/admin/zones', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const zones = await ShippingZone.find().sort('type name');
     
@@ -455,7 +455,7 @@ router.get('/admin/zones', protect, restrictTo('admin'), async (req, res) => {
  *       201:
  *         description: Shipping zone created successfully
  */
-router.post('/admin/zones', protect, restrictTo('admin'), async (req, res) => {
+router.post('/admin/zones', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const { name, states, price, estimatedDeliveryTime, type, courierPartner } = req.body;
     
@@ -509,7 +509,7 @@ router.post('/admin/zones', protect, restrictTo('admin'), async (req, res) => {
  *       200:
  *         description: Shipping zone details
  */
-router.get('/admin/zones/:id', protect, restrictTo('admin'), async (req, res) => {
+router.get('/admin/zones/:id', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const zone = await ShippingZone.findById(req.params.id);
     
@@ -572,7 +572,7 @@ router.get('/admin/zones/:id', protect, restrictTo('admin'), async (req, res) =>
  *       200:
  *         description: Shipping zone updated successfully
  */
-router.put('/admin/zones/:id', protect, restrictTo('admin'), async (req, res) => {
+router.put('/admin/zones/:id', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const { name, areas, price, estimatedDeliveryTime, isActive, type } = req.body;
     
@@ -626,7 +626,7 @@ router.put('/admin/zones/:id', protect, restrictTo('admin'), async (req, res) =>
  *       204:
  *         description: Zone deleted successfully
  */
-router.delete('/admin/zones/:id', protect, restrictTo('admin'), async (req, res) => {
+router.delete('/admin/zones/:id', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const zone = await ShippingZone.findByIdAndDelete(req.params.id);
     
@@ -678,7 +678,7 @@ router.delete('/admin/zones/:id', protect, restrictTo('admin'), async (req, res)
  *       200:
  *         description: Store pickup configuration updated
  */
-router.put('/admin/pickup', protect, restrictTo('admin'), async (req, res) => {
+router.put('/admin/pickup', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const { isEnabled, storeAddress, workingHours, preparationTime, pickupInstructions } = req.body;
     
@@ -742,7 +742,7 @@ router.put('/admin/pickup', protect, restrictTo('admin'), async (req, res) => {
  *       200:
  *         description: Shipping settings updated
  */
-router.put('/admin/settings', protect, restrictTo('admin'), async (req, res) => {
+router.put('/admin/settings', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const { freeDeliveryThreshold, defaultCourierPartner, maxDeliveryDays, enableCashOnDelivery } = req.body;
     
