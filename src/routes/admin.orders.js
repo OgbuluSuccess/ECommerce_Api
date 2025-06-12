@@ -267,7 +267,7 @@ router.get('/:id', protect, restrictTo('admin', 'superadmin'), async (req, res) 
  * @swagger
  * /admin/orders/{id}/status:
  *   patch:
- *     summary: Update order status (Superadmin only)
+ *     summary: Update order status (Admin and Superadmin)
  *     tags: [Admin]
  *     security:
  *       - bearerAuth: []
@@ -291,9 +291,9 @@ router.get('/:id', protect, restrictTo('admin', 'superadmin'), async (req, res) 
  *       200:
  *         description: Order status updated successfully
  *       403:
- *         description: Access denied. Only superadmin can update order status.
+ *         description: Access denied. Not authorized.
  */
-router.patch('/:id/status', protect, restrictTo('superadmin'), async (req, res) => {
+router.patch('/:id/status', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const { status } = req.body;
     
@@ -348,7 +348,7 @@ router.patch('/:id/status', protect, restrictTo('superadmin'), async (req, res) 
  * @swagger
  * /admin/orders/{id}/payment-status:
  *   patch:
- *     summary: Update order payment status (Superadmin only)
+ *     summary: Update order payment status (Admin and Superadmin)
  *     tags: [Admin]
  *     security:
  *       - bearerAuth: []
@@ -372,9 +372,9 @@ router.patch('/:id/status', protect, restrictTo('superadmin'), async (req, res) 
  *       200:
  *         description: Order payment status updated successfully
  *       403:
- *         description: Access denied. Only superadmin can update payment status.
+ *         description: Access denied. Not authorized.
  */
-router.patch('/:id/payment-status', protect, restrictTo('superadmin'), async (req, res) => {
+router.patch('/:id/payment-status', protect, restrictTo('admin', 'superadmin'), async (req, res) => {
   try {
     const { paymentStatus } = req.body;
     
