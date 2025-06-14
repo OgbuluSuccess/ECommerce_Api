@@ -53,7 +53,11 @@ const orderSchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
-    estimatedDeliveryTime: String
+    estimatedDeliveryTime: String,
+    isPickup: {
+      type: Boolean,
+      default: false
+    }
   },
   trackingInfo: {
     courier: String,

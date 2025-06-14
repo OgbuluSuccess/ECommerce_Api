@@ -298,20 +298,20 @@ router.post('/guest', async (req, res) => {
       email, 
       phone, 
       alternativePhone,
-      shippingAddress, 
+      shippingAddress, // This will be null if shippingMethod is 'pickup'
       country, 
       state, 
       city, 
       saveAddress,
       note,
       shippingMethod,
-      shippingZoneId,
+      shippingZoneId, // This might be 'pickup' or a zone ID
       cartItems,
       totalAmount: requestTotalAmount 
     } = req.body;
 
-    // Validate required fields
-    if (!firstName || !email || !phone || !shippingAddress || !country || !state || !cartItems || !shippingMethod) {
+    // Validate required fields - shipping address not required for pickup
+    if (!firstName || !email || !phone || (!shippingAddress && shippingMethod !== 'pickup') || !country || !state || !cartItems || !shippingMethod) {
       return res.status(400).json({
         success: false,
         message: 'Missing required fields'
@@ -351,176 +351,148 @@ router.post('/guest', async (req, res) => {
     // Check if user exists or create a new guest user
     let user = await User.findOne({ email });
     if (!user) {
-      // Create a new guest user
       user = await User.create({
         name: `${firstName} ${lastName || ''}`.trim(),
         email,
         phone,
         role: 'user',
-        // Generate a random password that will be reset later if the user wants to create an account
         password: Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8)
       });
     }
 
-    // Format shipping address
-    const formattedShippingAddress = {
+    // Format shipping address only if it's not a pickup
+    const formattedShippingAddress = shippingMethod !== 'pickup' && shippingAddress ? {
       street: shippingAddress,
       city,
       state,
       country,
-      zipCode: '',
+      zipCode: '', // Assuming zipCode might not always be provided or needed for all countries
       phone,
       alternativePhone: alternativePhone || ''
-    };
+    } : null;
 
-    // Save address to user if requested
-    if (saveAddress && user) {
+    // Save address to user if requested and it's not a pickup
+    if (saveAddress && user && formattedShippingAddress) {
       user.shippingAddresses = user.shippingAddresses || [];
       user.shippingAddresses.push(formattedShippingAddress);
       await user.save();
     }
 
-    // Get shipping zone details if provided
     let shippingZone = null;
     let shippingCost = 0;
     let estimatedDeliveryTime = '';
     let carrier = '';
-    
-    // Extract state from shipping address
-    const shippingState = shippingAddress?.state || '';
-    
-    if (shippingZoneId) {
-      const { ShippingZone, ShippingSettings, StorePickup } = require('../models/shipping.model');
-      
-      // Get shipping settings for free delivery threshold
-      let settings = await ShippingSettings.findOne();
-      if (!settings) {
-        settings = await ShippingSettings.create({});
+    let isPickupOrder = (shippingMethod === 'pickup' || shippingZoneId === 'pickup');
+    let pickupStoreAddress = null;
+    let pickupOrderInstructions = null;
+
+    const { ShippingZone, ShippingSettings, StorePickup } = require('../models/shipping.model');
+    let settings = await ShippingSettings.findOne();
+    if (!settings) {
+      settings = await ShippingSettings.create({}); // Ensure settings exist
+    }
+
+    if (isPickupOrder) {
+      let pickupConfig = await StorePickup.findOne();
+      if (!pickupConfig) {
+        // Create default pickup config if none exists
+        pickupConfig = await StorePickup.create({
+          storeAddress: 'Default Pickup Location, Abuja',
+          workingHours: 'Mon-Sat: 10 AM - 6 PM',
+          preparationTime: '1-3 hours',
+          pickupInstructions: 'Please present your order confirmation and a valid ID.'
+        });
       }
-      
-      // Handle store pickup
-      if (shippingZoneId === 'pickup') {
-        let pickupConfig = await StorePickup.findOne();
-        if (!pickupConfig) {
-          pickupConfig = await StorePickup.create({
-            storeAddress: 'Shop 15, Banex Plaza, Wuse 2, Abuja',
-            workingHours: 'Mon-Sat: 9:00 AM - 6:00 PM'
+      shippingCost = 0;
+      estimatedDeliveryTime = pickupConfig.preparationTime || '1-3 hours';
+      carrier = 'Store Pickup';
+      pickupStoreAddress = pickupConfig.storeAddress || 'Our Store (Details to be confirmed)';
+      pickupOrderInstructions = pickupConfig.pickupInstructions || 'Please await confirmation or contact us for pickup details.';
+    } else if (shippingZoneId) {
+      shippingZone = await ShippingZone.findById(shippingZoneId);
+      if (shippingZone) {
+        if (shippingZone.type === 'interstate' && state && !shippingZone.areas.includes(state) && 
+            !shippingZone.areas.includes('nationwide') && !shippingZone.areas.includes('all states')) {
+          return res.status(400).json({
+            success: false,
+            message: `Selected shipping zone does not cover ${state}. Please select a valid shipping option.`
           });
         }
-        
-        shippingCost = 0;
-        estimatedDeliveryTime = pickupConfig.preparationTime || '2-4 hours';
-        carrier = 'Store Pickup';
-      } else {
-        // Handle regular shipping zones
-        shippingZone = await ShippingZone.findById(shippingZoneId);
-        
-        if (shippingZone) {
-          // Validate that the shipping zone matches the state
-          if (shippingZone.type === 'interstate' && state && !shippingZone.areas.includes(state) && 
-              !shippingZone.areas.includes('nationwide') && !shippingZone.areas.includes('all states')) {
-            return res.status(400).json({
-              success: false,
-              message: `Selected shipping zone does not cover ${state}. Please select a valid shipping option.`
-            });
-          }
-          
-          shippingCost = shippingZone.price;
-          estimatedDeliveryTime = shippingZone.estimatedDeliveryTime;
-          carrier = shippingZone.courierPartner || settings.defaultCourierPartner;
-          
-          // Apply free shipping for orders above the threshold
-          if (totalAmount >= settings.freeDeliveryThreshold) {
-            shippingCost = 0;
-          }
+        shippingCost = shippingZone.price;
+        estimatedDeliveryTime = shippingZone.estimatedDeliveryTime;
+        carrier = shippingZone.courierPartner || settings.defaultCourierPartner || 'Local Courier';
+        if (totalAmount >= settings.freeDeliveryThreshold && settings.freeDeliveryThreshold > 0) {
+          shippingCost = 0;
         }
       }
-    } else if (shippingState) {
-      // If no shipping zone ID but we have a state, try to find an appropriate zone
-      const { ShippingZone, ShippingSettings } = require('../models/shipping.model');
-      
-      // Get shipping settings
-      let settings = await ShippingSettings.findOne();
-      if (!settings) {
-        settings = await ShippingSettings.create({});
-      }
-      
-      // Find a shipping zone for this state
-      let zone;
-      
+    } else if (state) { // Fallback to state-based shipping if no zoneId and not pickup
+      let zoneForState;
       if (state === 'FCT' || state.toLowerCase().includes('abuja')) {
-        zone = await ShippingZone.findOne({ type: 'abuja', isActive: true });
+        zoneForState = await ShippingZone.findOne({ type: 'abuja', isActive: true });
       } else {
-        zone = await ShippingZone.findOne({
+        zoneForState = await ShippingZone.findOne({
           type: 'interstate',
           isActive: true,
           areas: { $in: [state] }
         });
-        
-        // If no specific zone, try to find a nationwide zone
-        if (!zone) {
-          zone = await ShippingZone.findOne({
+        if (!zoneForState) {
+          zoneForState = await ShippingZone.findOne({
             type: 'interstate',
             isActive: true,
             areas: { $in: ['nationwide', 'all states'] }
           });
         }
       }
-      
-      if (zone) {
-        shippingZone = zone;
-        shippingCost = zone.price;
-        estimatedDeliveryTime = zone.estimatedDeliveryTime;
-        carrier = zone.courierPartner || settings.defaultCourierPartner;
-        
-        // Apply free shipping for orders above the threshold
-        if (totalAmount >= settings.freeDeliveryThreshold) {
+      if (zoneForState) {
+        shippingZone = zoneForState; // Keep track of the resolved zone
+        shippingCost = zoneForState.price;
+        estimatedDeliveryTime = zoneForState.estimatedDeliveryTime;
+        carrier = zoneForState.courierPartner || settings.defaultCourierPartner || 'Local Courier';
+        if (totalAmount >= settings.freeDeliveryThreshold && settings.freeDeliveryThreshold > 0) {
           shippingCost = 0;
         }
       }
     }
     
-    // Log the total amount for debugging
-    console.log('Using total amount:', requestTotalAmount || totalAmount);
+    // Final total amount including shipping, if not pickup
+    const finalTotalAmount = isPickupOrder ? (requestTotalAmount || totalAmount) : (requestTotalAmount || totalAmount) + shippingCost;
+
+    console.log('Using total amount for order:', finalTotalAmount);
     
-    // Create order
     const order = await Order.create({
       user: user._id,
       items: orderItems,
-      totalAmount: requestTotalAmount || totalAmount, // Use the total amount from request if provided, otherwise use calculated amount
-      shippingAddress: {
-        street: shippingAddress,
-        city,
-        state,
-        country
-      },
+      productAmount: totalAmount, // Store the sum of item prices before shipping
+      shippingCost: isPickupOrder ? 0 : shippingCost,
+      totalAmount: finalTotalAmount,
+      shippingAddress: isPickupOrder ? null : formattedShippingAddress, // Use formatted address
       shipping: {
-        zone: shippingZoneId,
+        zone: isPickupOrder ? null : (shippingZone ? shippingZone._id : shippingZoneId), // Store resolved zone ID or original if no resolution
         method: shippingMethod,
-        cost: shippingCost,
-        estimatedDeliveryTime
+        cost: isPickupOrder ? 0 : shippingCost,
+        estimatedDeliveryTime,
+        isPickup: isPickupOrder,
+        storeAddress: isPickupOrder ? pickupStoreAddress : null,
+        pickupInstructions: isPickupOrder ? pickupOrderInstructions : null,
+        carrier: carrier
       },
       status: 'pending',
       paymentStatus: 'pending',
       paymentMethod: 'paystack'
     });
 
-    // Generate a unique reference with IDW format
     const reference = `IDW${Math.floor(100000 + Math.random() * 900000)}`;
 
-    // Inside your guest checkout route, before initializing Paystack
-    console.log('Paystack config:', typeof paystack, Object.keys(paystack));
     console.log('Attempting to initialize Paystack transaction with:', {
       email: user.email,
-      amount: Math.round(order.totalAmount * 100), // Includes shipping cost
+      amount: Math.round(order.totalAmount * 100), // Use the final totalAmount from the order
       reference,
       callback_url: `${process.env.FRONTEND_URL}/paymentVerify/${order._id}`
     });
     
-    // Initialize Paystack transaction
     const paystackResponse = await paystack.transaction.initialize({
       email: user.email,
-      amount: Math.round(order.totalAmount * 100), // Amount in Kobo (multiply by 100 to convert from Naira) - includes shipping
+      amount: Math.round(order.totalAmount * 100),
       reference,
       callback_url: `${process.env.FRONTEND_URL}/paymentVerify/${order._id}`,
       metadata: {
@@ -536,39 +508,17 @@ router.post('/guest', async (req, res) => {
       }
     });
 
-    // Update order with payment details
-    order.paymentDetails = {
-      reference: reference,
-      authorization_url: paystackResponse.data.authorization_url,
-      access_code: paystackResponse.data.access_code
-    };
-    await order.save();
-
-    // Return success response with payment URL
-    return res.status(200).json({
-      success: true,
-      message: 'Payment initialized successfully',
-      data: {
-        authorization_url: paystackResponse.data.authorization_url,
-        access_code: paystackResponse.data.access_code,
-        reference: reference,
-        order_id: order._id
-      }
-    });
-
-    if (!paystackResponse.status) {
-      // If Paystack initialization fails, update order status
-      order.paymentStatus = 'failed';
-      await order.save();
-
-      return res.status(400).json({
-        success: false,
-        message: 'Payment initialization failed',
-        error: paystackResponse.message
-      });
+    if (!paystackResponse || !paystackResponse.status || !paystackResponse.data) {
+        order.paymentStatus = 'failed';
+        await order.save();
+        console.error('Paystack initialization failed:', paystackResponse && paystackResponse.message ? paystackResponse.message : 'Unknown Paystack error');
+        return res.status(400).json({
+            success: false,
+            message: 'Payment initialization failed. Please try again or contact support.',
+            error: paystackResponse && paystackResponse.message ? paystackResponse.message : 'Unknown error'
+        });
     }
 
-    // Update order with payment details
     order.paymentDetails = {
       reference: reference,
       authorization_url: paystackResponse.data.authorization_url,
@@ -577,17 +527,18 @@ router.post('/guest', async (req, res) => {
     };
     await order.save();
 
-    // Return success with payment URL
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: 'Checkout successful, redirecting to payment',
       data: {
         authorization_url: paystackResponse.data.authorization_url,
+        access_code: paystackResponse.data.access_code,
         reference: reference,
         order_id: order._id,
         order_number: order.orderNumber
       }
     });
+
   } catch (error) {
     console.error('Checkout error:', error);
     res.status(500).json({
@@ -628,156 +579,159 @@ router.post('/guest', async (req, res) => {
  */
 router.post('/user', protect, async (req, res) => {
   try {
-    const { firstName, lastName, email, phone, shippingAddress, city, state, country, products, shippingMethod, shippingZoneId, totalAmount } = req.body;
+    const { 
+      shippingAddress, // This will be null if shippingMethod is 'pickup'
+      city, 
+      state, 
+      country, 
+      shippingMethod, 
+      shippingZoneId, // This might be 'pickup' or a zone ID
+      note,
+      // totalAmount from req.body is not used directly for logged-in users; cart total is authoritative
+    } = req.body;
 
-    // Validate required fields
-    if (!shippingAddress || !shippingMethod) {
+    // Validate required fields - shipping address not required for pickup
+    if ((!shippingAddress && shippingMethod !== 'pickup') || !shippingMethod) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields'
+        message: 'Missing required shipping information.'
       });
     }
 
-    // Get user's cart
-    const cart = await Cart.findOne({ user: req.user._id });
+    const userId = req.user._id;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    const cart = await Cart.findOne({ user: userId }).populate('items.product');
     if (!cart || cart.items.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'No items in cart'
-      });
+      return res.status(400).json({ success: false, message: 'Your cart is empty.' });
     }
 
-    // Check stock availability
+    // Check stock availability and calculate product total
+    let productTotalAmount = 0;
+    const orderItems = [];
     for (const item of cart.items) {
-      const product = await Product.findById(item.product);
+      const product = item.product; // Already populated
       if (!product || product.stock < item.quantity) {
         return res.status(400).json({
           success: false,
-          message: `Insufficient stock for product: ${product ? product.name : 'Unknown'}`
+          message: `Insufficient stock for product: ${product ? product.name : 'Unknown Product'}`
         });
       }
+      orderItems.push({
+        product: product._id,
+        quantity: item.quantity,
+        price: product.price,
+        name: product.name
+      });
+      productTotalAmount += product.price * item.quantity;
     }
 
-    // Get user details
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-    
-    // Get shipping zone details if provided
+    // Format shipping address only if it's not a pickup
+    const formattedShippingAddress = shippingMethod !== 'pickup' && shippingAddress ? {
+      street: shippingAddress, // Assuming shippingAddress from body is the street
+      city,
+      state,
+      country,
+      zipCode: '', // Add if available from body or user profile
+      phone: user.phone, // Get phone from user profile
+    } : null;
+
     let shippingZone = null;
     let shippingCost = 0;
     let estimatedDeliveryTime = '';
     let carrier = '';
-    
-    // Extract state from shipping address
-    const shippingState = shippingAddress?.state || '';
-    
-    if (shippingZoneId) {
-      const { ShippingZone, ShippingSettings, StorePickup } = require('../models/shipping.model');
-      
-      // Get shipping settings for free delivery threshold
-      let settings = await ShippingSettings.findOne();
-      if (!settings) {
-        settings = await ShippingSettings.create({});
+    let isPickupOrder = (shippingMethod === 'pickup' || shippingZoneId === 'pickup');
+    let pickupStoreAddress = null;
+    let pickupOrderInstructions = null;
+
+    const { ShippingZone, ShippingSettings, StorePickup } = require('../models/shipping.model');
+    let settings = await ShippingSettings.findOne();
+    if (!settings) {
+      settings = await ShippingSettings.create({}); // Ensure settings exist
+    }
+
+    if (isPickupOrder) {
+      let pickupConfig = await StorePickup.findOne();
+      if (!pickupConfig) {
+        pickupConfig = await StorePickup.create({
+          storeAddress: 'Default Pickup Location, Abuja',
+          workingHours: 'Mon-Sat: 10 AM - 6 PM',
+          preparationTime: '1-3 hours',
+          pickupInstructions: 'Please present your order confirmation and a valid ID.'
+        });
       }
-      
-      // Handle store pickup
-      if (shippingZoneId === 'pickup') {
-        let pickupConfig = await StorePickup.findOne();
-        if (!pickupConfig) {
-          pickupConfig = await StorePickup.create({
-            storeAddress: 'Shop 15, Banex Plaza, Wuse 2, Abuja',
-            workingHours: 'Mon-Sat: 9:00 AM - 6:00 PM'
+      shippingCost = 0;
+      estimatedDeliveryTime = pickupConfig.preparationTime || '1-3 hours';
+      carrier = 'Store Pickup';
+      pickupStoreAddress = pickupConfig.storeAddress;
+      pickupOrderInstructions = pickupConfig.pickupInstructions;
+    } else if (shippingZoneId) {
+      shippingZone = await ShippingZone.findById(shippingZoneId);
+      if (shippingZone) {
+        if (shippingZone.type === 'interstate' && state && !shippingZone.areas.includes(state) && 
+            !shippingZone.areas.includes('nationwide') && !shippingZone.areas.includes('all states')) {
+          return res.status(400).json({
+            success: false,
+            message: `Selected shipping zone does not cover ${state}. Please select a valid shipping option.`
           });
         }
-        
-        shippingCost = 0;
-        estimatedDeliveryTime = pickupConfig.preparationTime || '2-4 hours';
-        carrier = 'Store Pickup';
-      } else {
-        // Handle regular shipping zones
-        shippingZone = await ShippingZone.findById(shippingZoneId);
-        
-        if (shippingZone) {
-          // Validate that the shipping zone matches the state
-          if (shippingZone.type === 'interstate' && state && !shippingZone.areas.includes(state) && 
-              !shippingZone.areas.includes('nationwide') && !shippingZone.areas.includes('all states')) {
-            return res.status(400).json({
-              success: false,
-              message: `Selected shipping zone does not cover ${state}. Please select a valid shipping option.`
-            });
-          }
-          
-          shippingCost = shippingZone.price;
-          estimatedDeliveryTime = shippingZone.estimatedDeliveryTime;
-          carrier = shippingZone.courierPartner || settings.defaultCourierPartner;
-          
-          // Apply free shipping for orders above the threshold
-          if (cart.totalAmount >= settings.freeDeliveryThreshold) {
-            shippingCost = 0;
-          }
+        shippingCost = shippingZone.price;
+        estimatedDeliveryTime = shippingZone.estimatedDeliveryTime;
+        carrier = shippingZone.courierPartner || settings.defaultCourierPartner || 'Local Courier';
+        if (productTotalAmount >= settings.freeDeliveryThreshold && settings.freeDeliveryThreshold > 0) {
+          shippingCost = 0;
         }
       }
-    } else if (shippingState) {
-      // If no shipping zone ID but we have a state, try to find an appropriate zone
-      const { ShippingZone, ShippingSettings } = require('../models/shipping.model');
-      
-      // Get shipping settings
-      let settings = await ShippingSettings.findOne();
-      if (!settings) {
-        settings = await ShippingSettings.create({});
-      }
-      
-      // Find a shipping zone for this state
-      let zone;
-      
+    } else if (state) { // Fallback to state-based shipping if no zoneId and not pickup
+      let zoneForState;
       if (state === 'FCT' || state.toLowerCase().includes('abuja')) {
-        zone = await ShippingZone.findOne({ type: 'abuja', isActive: true });
+        zoneForState = await ShippingZone.findOne({ type: 'abuja', isActive: true });
       } else {
-        zone = await ShippingZone.findOne({
+        zoneForState = await ShippingZone.findOne({
           type: 'interstate',
           isActive: true,
           areas: { $in: [state] }
         });
-        
-        // If no specific zone, try to find a nationwide zone
-        if (!zone) {
-          zone = await ShippingZone.findOne({
+        if (!zoneForState) {
+          zoneForState = await ShippingZone.findOne({
             type: 'interstate',
             isActive: true,
             areas: { $in: ['nationwide', 'all states'] }
           });
         }
       }
-      
-      if (zone) {
-        shippingZone = zone;
-        shippingCost = zone.price;
-        estimatedDeliveryTime = zone.estimatedDeliveryTime;
-        carrier = zone.courierPartner || settings.defaultCourierPartner;
-        
-        // Apply free shipping for orders above the threshold
-        if (cart.totalAmount >= settings.freeDeliveryThreshold) {
+      if (zoneForState) {
+        shippingZone = zoneForState;
+        shippingCost = zoneForState.price;
+        estimatedDeliveryTime = zoneForState.estimatedDeliveryTime;
+        carrier = zoneForState.courierPartner || settings.defaultCourierPartner || 'Local Courier';
+        if (productTotalAmount >= settings.freeDeliveryThreshold && settings.freeDeliveryThreshold > 0) {
           shippingCost = 0;
         }
       }
     }
-    
-    // Create order
+
+    const finalTotalAmount = productTotalAmount + (isPickupOrder ? 0 : shippingCost);
+
     const order = await Order.create({
-      user: req.user._id,
-      items: cart.items,
-      totalAmount: cart.totalAmount + shippingCost,
-      shippingAddress,
+      user: userId,
+      items: orderItems,
+      productAmount: productTotalAmount,
+      shippingCost: isPickupOrder ? 0 : shippingCost,
+      totalAmount: finalTotalAmount,
+      shippingAddress: isPickupOrder ? null : formattedShippingAddress,
       shipping: {
-        zone: shippingZoneId,
+        zone: isPickupOrder ? null : (shippingZone ? shippingZone._id : shippingZoneId),
         method: shippingMethod,
-        cost: shippingCost,
-        estimatedDeliveryTime
+        cost: isPickupOrder ? 0 : shippingCost,
+        estimatedDeliveryTime,
+        isPickup: isPickupOrder,
+        storeAddress: isPickupOrder ? pickupStoreAddress : null,
+        pickupInstructions: isPickupOrder ? pickupOrderInstructions : null,
+        carrier: carrier
       },
       status: 'pending',
       paymentStatus: 'pending',
@@ -785,17 +739,16 @@ router.post('/user', protect, async (req, res) => {
       note: note || ''
     });
 
-    // Generate a unique reference with IDW format
     const reference = `IDW${Math.floor(100000 + Math.random() * 900000)}`;
 
-    // Initialize Paystack transaction
     const paystackResponse = await paystack.transaction.initialize({
       email: user.email,
-      amount: Math.round(order.totalAmount * 100), // Paystack amount in kobo (multiply by 100) - includes shipping
+      amount: Math.round(order.totalAmount * 100),
       reference,
-      callback_url: `${process.env.FRONTEND_URL}/payment/verify/${order._id}`,
+      callback_url: `${process.env.FRONTEND_URL}/paymentVerify/${order._id}`, // Ensure this matches guest checkout for consistency
       metadata: {
         order_id: order._id.toString(),
+        total_amount: order.totalAmount,
         custom_fields: [
           {
             display_name: 'Order Number',
@@ -806,19 +759,17 @@ router.post('/user', protect, async (req, res) => {
       }
     });
 
-    if (!paystackResponse.status) {
-      // If Paystack initialization fails, update order status
+    if (!paystackResponse || !paystackResponse.status || !paystackResponse.data) {
       order.paymentStatus = 'failed';
       await order.save();
-
+      console.error('Paystack initialization failed for user checkout:', paystackResponse && paystackResponse.message ? paystackResponse.message : 'Unknown Paystack error');
       return res.status(400).json({
         success: false,
-        message: 'Payment initialization failed',
-        error: paystackResponse.message
+        message: 'Payment initialization failed. Please try again or contact support.',
+        error: paystackResponse && paystackResponse.message ? paystackResponse.message : 'Unknown error'
       });
     }
 
-    // Update order with payment details
     order.paymentDetails = {
       reference: reference,
       authorization_url: paystackResponse.data.authorization_url,
@@ -829,10 +780,9 @@ router.post('/user', protect, async (req, res) => {
 
     // Clear cart after successful order creation
     cart.items = [];
-    cart.totalAmount = 0;
+    cart.totalAmount = 0; // Reset cart total
     await cart.save();
 
-    // Return success with payment URL
     res.status(200).json({
       success: true,
       message: 'Checkout successful, redirecting to payment',
@@ -844,7 +794,7 @@ router.post('/user', protect, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Checkout error:', error);
+    console.error('User checkout error:', error);
     res.status(500).json({
       success: false,
       message: 'An error occurred during checkout',
@@ -889,6 +839,20 @@ router.get('/shipping-methods', async (req, res) => {
       });
     }
     
+    // Add store pickup option if enabled (available for all locations)
+    if (pickupConfig.isEnabled) {
+      shippingMethods.push({
+        id: 'pickup',
+        name: 'Store Pickup',
+        description: `Pickup at ${pickupConfig.storeAddress}`,
+        price: 0, // Free pickup
+        estimatedDelivery: pickupConfig.preparationTime || '2-4 hours',
+        type: 'pickup',
+        workingHours: pickupConfig.workingHours,
+        pickupInstructions: pickupConfig.pickupInstructions
+      });
+    }
+    
     // If state is FCT/Abuja, get Abuja zones
     if (!state || state === 'FCT' || state.toLowerCase().includes('abuja')) {
       const abujaZones = await ShippingZone.find({ type: 'abuja', isActive: true });
@@ -905,20 +869,6 @@ router.get('/shipping-methods', async (req, res) => {
           courierPartner: zone.courierPartner || settings.defaultCourierPartner
         });
       });
-      
-      // Add store pickup if enabled and we're in Abuja
-      if (pickupConfig.isEnabled) {
-        shippingMethods.push({
-          id: 'pickup',
-          name: 'Store Pickup',
-          description: `Pickup at ${pickupConfig.storeAddress}`,
-          price: 0, // Free pickup
-          estimatedDelivery: pickupConfig.preparationTime || '2-4 hours',
-          type: 'pickup',
-          workingHours: pickupConfig.workingHours,
-          pickupInstructions: pickupConfig.pickupInstructions
-        });
-      }
     } else {
       // For other states, find matching interstate zones
       const interstateZones = await ShippingZone.find({

@@ -10,6 +10,7 @@ const paystack = require('../config/paystack.config');
 const { sendOrderConfirmationEmail, sendNewOrderAdminNotification, sendOrderStatusUpdateEmail } = require('../utils/email.utils');
 const { sendShippingConfirmationEmail, sendDeliveryConfirmationEmail } = require('../utils/shipping-emails');
 const { sendFailedPaymentAlert } = require('../utils/admin-emails');
+const { ShippingZone, ShippingSettings, StorePickup } = require('../models/shipping.model');
 
 /**
  * @swagger
@@ -41,10 +42,19 @@ const { sendFailedPaymentAlert } = require('../utils/admin-emails');
 // Create new order
 router.post('/', protect, async (req, res) => {
   try {
-    const { shippingAddress, paymentMethod } = req.body;
+    const {
+      shippingAddress, // Object with full address
+      paymentMethod,
+      shippingMethod, // 'delivery' or 'pickup'
+      shippingZoneId, // ID for delivery, 'pickup' for pickup
+      note,
+      totalAmount: requestTotalAmount // Total amount from frontend, includes shipping
+    } = req.body;
+
+    const user = await User.findById(req.user._id);
 
     // Get user's cart
-    const cart = await Cart.findOne({ user: req.user._id });
+    const cart = await Cart.findOne({ user: req.user._id }).populate('items.product');
     if (!cart || cart.items.length === 0) {
       return res.status(400).json({
         success: false,
@@ -53,56 +63,115 @@ router.post('/', protect, async (req, res) => {
     }
 
     // Check stock availability
+    let productAmount = 0;
+    const orderItems = [];
     for (const item of cart.items) {
-      const product = await Product.findById(item.product);
+      const product = item.product;
       if (!product || product.stock < item.quantity) {
         return res.status(400).json({
           success: false,
           message: `Insufficient stock for product: ${product ? product.name : 'Unknown'}`
         });
       }
+      orderItems.push({
+        product: product._id,
+        quantity: item.quantity,
+        price: product.price,
+        name: product.name
+      });
+      productAmount += product.price * item.quantity;
     }
+
+    // --- Shipping Logic --- //
+    let shippingCost = 0;
+    let estimatedDeliveryTime = '';
+    let carrier = '';
+    let shippingZone = null;
+    const isPickupOrder = shippingMethod === 'pickup' || shippingZoneId === 'pickup';
+    let pickupStoreAddress = null;
+    let pickupOrderInstructions = null;
+
+    const settings = await ShippingSettings.findOne() || await ShippingSettings.create({});
+
+    if (isPickupOrder) {
+      const pickupConfig = await StorePickup.findOne() || await StorePickup.create({});
+      shippingCost = 0;
+      estimatedDeliveryTime = pickupConfig.preparationTime || '1-3 hours';
+      carrier = 'Store Pickup';
+      pickupStoreAddress = pickupConfig.storeAddress || 'Our Store (Details to be confirmed)';
+      pickupOrderInstructions = pickupConfig.pickupInstructions || 'Please await confirmation or contact us for pickup details.';
+    } else if (shippingZoneId) {
+      shippingZone = await ShippingZone.findById(shippingZoneId);
+      if (shippingZone) {
+        shippingCost = shippingZone.price;
+        estimatedDeliveryTime = shippingZone.estimatedDeliveryTime;
+        carrier = shippingZone.courierPartner || settings.defaultCourierPartner || 'Local Courier';
+        if (productAmount >= settings.freeDeliveryThreshold && settings.freeDeliveryThreshold > 0) {
+          shippingCost = 0;
+        }
+      }
+    } else if (shippingAddress && shippingAddress.state) {
+      // Fallback logic if no zone ID is provided
+      const state = shippingAddress.state;
+      let zoneForState;
+      if (state === 'FCT' || state.toLowerCase().includes('abuja')) {
+        zoneForState = await ShippingZone.findOne({ type: 'abuja', isActive: true });
+      } else {
+        zoneForState = await ShippingZone.findOne({ type: 'interstate', isActive: true, areas: { $in: [state, 'nationwide', 'all states'] } });
+      }
+      if (zoneForState) {
+        shippingZone = zoneForState;
+        shippingCost = zoneForState.price;
+        estimatedDeliveryTime = zoneForState.estimatedDeliveryTime;
+        carrier = zoneForState.courierPartner || settings.defaultCourierPartner || 'Local Courier';
+        if (productAmount >= settings.freeDeliveryThreshold && settings.freeDeliveryThreshold > 0) {
+          shippingCost = 0;
+        }
+      }
+    }
+
+    const finalTotalAmount = requestTotalAmount || (productAmount + shippingCost);
 
     // Create order
     const order = await Order.create({
       user: req.user._id,
-      items: cart.items,
-      totalAmount: cart.totalAmount,
-      shippingAddress,
-      paymentMethod
+      items: orderItems,
+      productAmount,
+      shippingCost: isPickupOrder ? 0 : shippingCost,
+      totalAmount: finalTotalAmount,
+      shippingAddress: isPickupOrder ? null : shippingAddress,
+      shipping: {
+        zone: isPickupOrder ? null : (shippingZone ? shippingZone._id : null),
+        method: shippingMethod,
+        cost: isPickupOrder ? 0 : shippingCost,
+        estimatedDeliveryTime,
+        isPickup: isPickupOrder,
+        storeAddress: isPickupOrder ? pickupStoreAddress : null,
+        pickupInstructions: isPickupOrder ? pickupOrderInstructions : null,
+        carrier: carrier
+      },
+      paymentMethod,
+      paymentStatus: 'pending',
+      status: 'pending',
+      note
     });
 
     // Update product stock
     for (const item of cart.items) {
-      await Product.findByIdAndUpdate(item.product, {
+      await Product.findByIdAndUpdate(item.product._id, {
         $inc: { stock: -item.quantity }
       });
     }
 
     // Clear cart
-    cart.items = [];
-    await cart.save();
+    await Cart.findByIdAndDelete(cart._id);
 
-    await order.populate('items.product', 'name price images');
-    
-    // Get user details for email
-    const user = await User.findById(req.user._id);
-    
-    // Send order confirmation email to customer
+    // Send emails
     try {
       await sendOrderConfirmationEmail(order, user);
-      console.log(`Order confirmation email sent to ${user.email}`);
-    } catch (emailError) {
-      console.error('Error sending order confirmation email:', emailError);
-      // Continue with order creation even if email fails
-    }
-    
-    // Send notification to admin
-    try {
       await sendNewOrderAdminNotification(order, user);
-      console.log('New order notification sent to admin');
     } catch (emailError) {
-      console.error('Error sending admin notification email:', emailError);
+      console.error('Error sending order emails:', emailError);
     }
 
     res.status(201).json({

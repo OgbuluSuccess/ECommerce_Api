@@ -1,374 +1,233 @@
 const { sendMail } = require('../config/email.config');
 const { EMAIL_STYLES, emailComponents, baseEmailTemplate } = require('./emailTemplates');
+const { StorePickup } = require('../models/shipping.model');
 
 /**
- * Helper function to generate order items table rows
- * @param {Array} items - Order items array
- * @returns {Array} Formatted table rows
+ * Helper function to generate order items table rows.
+ * It robustly finds the product name from the item object.
+ * @param {Array} items - Order items array.
+ * @returns {Array} Formatted table rows for emailComponents.table.
  */
 const generateOrderItemsRows = (items) => {
+  if (!items || items.length === 0) {
+    return [[{ content: 'No items in this order.', colSpan: 4 }]];
+  }
   return items.map(item => {
-    // Handle both populated and non-populated product objects
-    let productName = 'Product';
-    
-    // If product is populated as an object
-    if (item.product && typeof item.product === 'object' && item.product.name) {
-      productName = item.product.name;
-    } 
-    // If product name is directly on the item
-    else if (item.name) {
+    let productName = 'Product Name Unavailable';
+    if (item.name) {
       productName = item.name;
+    } else if (item.product && typeof item.product === 'object' && item.product.name) {
+      productName = item.product.name;
+    } else if (item.productId && typeof item.productId === 'object' && item.productId.name) {
+      productName = item.productId.name; // Fallback for different population strategies
     }
-    
+
+    const price = item.price || 0;
+    const quantity = item.quantity || 0;
+    const total = price * quantity;
+
     return [
       { content: productName },
-      { content: item.quantity, align: 'center' },
-      { content: `₦${item.price.toFixed(2)}`, align: 'right' },
-      { content: `₦${(item.price * item.quantity).toFixed(2)}`, align: 'right' }
+      { content: quantity, align: 'center' },
+      { content: `₦${price.toFixed(2)}`, align: 'right' },
+      { content: `₦${total.toFixed(2)}`, align: 'right' },
     ];
   });
 };
 
 /**
- * Send welcome email to newly registered user
- * @param {Object} user - User object with name and email
- * @returns {Promise}
+ * Generates the HTML for shipping information based on order type.
+ * @param {Object} order - The order object.
+ * @param {Object} pickupDetails - Fallback pickup details from DB.
+ * @returns {string} HTML string for the shipping section.
  */
-const sendWelcomeEmail = async (user) => {
-  try {
-    const content = `
-      <p>Hello ${user.name},</p>
-      <p>Thank you for registering with Ice Deluxe Wears. We're excited to have you as part of our community!</p>
-      
-      <p>With your new account, you can:</p>
-      <ul>
-        <li>Shop our latest collections</li>
-        <li>Track your orders</li>
-        <li>Save items to your wishlist</li>
-        <li>Receive exclusive offers</li>
-      </ul>
-      
-      <p>If you have any questions or need assistance, please don't hesitate to contact our customer support team.</p>
-      
-      ${emailComponents.button(
-        'Start Shopping',
-        process.env.FRONTEND_URL,
-        EMAIL_STYLES.colors.primary
-      )}
-      
-      <div style="margin-top: ${EMAIL_STYLES.spacing.large}; font-size: 14px; color: ${EMAIL_STYLES.colors.lightText};">
-        <p>If you did not register for this account, please ignore this email.</p>
-      </div>
+const generateShippingInfoHtml = (order, pickupDetails) => {
+  const isPickup = order.shipping && order.shipping.isPickup;
+
+  if (isPickup) {
+    const storeAddress = (order.shipping && order.shipping.storeAddress) || (pickupDetails && pickupDetails.storeAddress) || 'Our pickup location.';
+    const prepTime = (order.shipping && order.shipping.estimatedDeliveryTime) || (pickupDetails && pickupDetails.preparationTime) || 'Usually ready in 2-4 hours.';
+    const instructions = (order.shipping && order.shipping.pickupInstructions) || (pickupDetails && pickupDetails.pickupInstructions) || 'Please bring your order confirmation and a valid ID.';
+
+    return `
+      <p><strong>Delivery Method:</strong> Store Pickup</p>
+      <p><strong>Pickup Location:</strong><br>${storeAddress.replace(/\n/g, '<br>')}</p>
+      <p><strong>Ready for Pickup:</strong> ${prepTime}</p>
+      <p><strong>Pickup Instructions:</strong><br>${instructions.replace(/\n/g, '<br>')}</p>
     `;
-
-    const mailOptions = {
-      from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'noreply@icedeluxewears.com'}>`,
-      to: user.email,
-      subject: 'Welcome to Ice Deluxe Wears',
-      headers: {
-        'X-Priority': '1',
-        'Importance': 'high',
-        'X-MSMail-Priority': 'High',
-        'X-Mailer': 'Ice Deluxe Wears Mailer',
-      },
-      html: baseEmailTemplate(
-        content,
-        'Welcome to Ice Deluxe Wears!',
-        'Your fashion journey begins here',
-        EMAIL_STYLES.colors.primary
-      )
-    };
-
-    return await sendMail(mailOptions);
-  } catch (error) {
-    console.error('Error sending welcome email:', error);
-    throw error;
   }
+
+  // Handle standard delivery
+  const shippingAddress = order.shippingAddress;
+  if (!shippingAddress || !shippingAddress.street) {
+    return '<p><strong>Shipping Address:</strong> Not provided.</p>';
+  }
+
+  const addressParts = [
+    shippingAddress.city,
+    shippingAddress.state,
+    shippingAddress.zipCode,
+  ].filter(Boolean).join(', ');
+
+  return `
+    <p><strong>Delivery Method:</strong> ${order.shipping?.carrier || 'Standard Delivery'}</p>
+    <p><strong>Shipping Address:</strong><br>
+      ${shippingAddress.street}<br>
+      ${addressParts}<br>
+      ${shippingAddress.country || 'Nigeria'}
+    </p>
+    ${order.shipping?.estimatedDeliveryTime ? `<p><strong>Estimated Delivery:</strong> ${order.shipping.estimatedDeliveryTime}</p>` : ''}
+  `;
 };
 
+
 /**
- * Send order confirmation email to customer
- * @param {Object} order - Order object with details
- * @param {Object} user - User object with name and email
- * @returns {Promise}
+ * Send order confirmation email to a customer.
+ * @param {Object} order - The order object.
+ * @param {Object} user - The user object.
  */
 const sendOrderConfirmationEmail = async (order, user) => {
   try {
-    const orderItemsRows = generateOrderItemsRows(order.items);
-    
+    let pickupDetails = null;
+    if (order.shipping && order.shipping.isPickup) {
+      pickupDetails = await StorePickup.findOne();
+    }
+
+    const orderItemsTable = emailComponents.table(
+      ['Product', 'Qty', 'Price', 'Total'],
+      generateOrderItemsRows(order.items)
+    );
+
+    const shippingInfoHtml = generateShippingInfoHtml(order, pickupDetails);
+
     const content = `
-      <p>Hello ${user.name},</p>
-      <p>Thank you for your order! We're processing it now and will let you know when it ships.</p>
+      <p>Dear ${user.name || 'Customer'},</p>
+      <p>Thank you for your order! We've received it and are getting it ready. Here is a summary of your purchase:</p>
       
       <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Order Summary</h3>
-      ${emailComponents.table(
-        ['Product', 'Qty', 'Price', 'Total'],
-        orderItemsRows
-      )}
-      
-      <div style="margin: ${EMAIL_STYLES.spacing.medium} 0;">
-        <p><strong>Subtotal:</strong> ₦${order.totalAmount.toFixed(2)}</p>
-        <p><strong>Total:</strong> ₦${order.totalAmount.toFixed(2)}</p>
+      <div style="background-color: ${EMAIL_STYLES.colors.lightBg}; padding: ${EMAIL_STYLES.spacing.small}; border-radius: ${EMAIL_STYLES.borderRadius}; margin-bottom: ${EMAIL_STYLES.spacing.medium};">
+        <p><strong>Order Number:</strong> ${order.orderNumber}</p>
+        <p><strong>Order Date:</strong> ${new Date(order.createdAt).toLocaleDateString()}</p>
+        <p><strong>Payment Status:</strong> ${order.paymentStatus}</p>
       </div>
+
+      ${orderItemsTable}
       
+      <div style="margin: ${EMAIL_STYLES.spacing.medium} 0; text-align: right;">
+        <p><strong>Subtotal:</strong> ₦${(order.productAmount || 0).toFixed(2)}</p>
+        ${order.shipping.cost > 0 ? `<p><strong>Shipping:</strong> ₦${order.shipping.cost.toFixed(2)}</p>` : ''}
+        <p style="font-size: 1.1em; font-weight: bold;"><strong>Total:</strong> ₦${(order.totalAmount || 0).toFixed(2)}</p>
+      </div>
+
       <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Shipping Information</h3>
       <div style="background-color: ${EMAIL_STYLES.colors.lightBg}; padding: ${EMAIL_STYLES.spacing.small}; border-radius: ${EMAIL_STYLES.borderRadius};">
-        <p>
-          <strong>Address:</strong><br>
-          ${order.shippingAddress.street}<br>
-          ${order.shippingAddress.city}, ${order.shippingAddress.state} ${order.shippingAddress.zipCode}<br>
-          ${order.shippingAddress.country}
-        </p>
-        <p>
-          <strong>Shipping Zone:</strong> ${order.shipping && order.shipping.method === 'pickup' ? 'Store Pickup' : 
-            (order.shipping && order.shipping.zone && order.shipping.zone.name ? order.shipping.zone.name : 'Standard Shipping')}
-        </p>
-        ${order.shipping && order.shipping.estimatedDeliveryTime ? 
-          `<p><strong>Estimated Delivery:</strong> ${order.shipping.estimatedDeliveryTime}</p>` : ''}
+        ${shippingInfoHtml}
       </div>
-      
-      <h3 style="color: ${EMAIL_STYLES.colors.darkText}; margin-top: ${EMAIL_STYLES.spacing.medium};">Payment Method</h3>
-      <p>${order.paymentMethod === 'paystack' ? 'Paystack' : order.paymentMethod}</p>
-      
+
+      <div style="margin-top: ${EMAIL_STYLES.spacing.large};">
+        <p>If you have any questions, please reply to this email or contact our support team.</p>
+        <p>Thank you for shopping with us!</p>
+      </div>
     `;
 
     const mailOptions = {
-      from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'orders@icedeluxewears.com'}>`,
+      from: `"${process.env.EMAIL_FROM_NAME}" <${process.env.EMAIL_FROM}>`,
       to: user.email,
-      subject: `Order Confirmation #${order.orderNumber}`,
-      headers: {
-        'X-Priority': '1',
-        'Importance': 'high',
-        'X-MSMail-Priority': 'High',
-        'X-Mailer': 'Ice Deluxe Wears Mailer',
-      },
+      subject: `Your Ice Deluxe Wears Order #${order.orderNumber} is Confirmed`,
       html: baseEmailTemplate(
         content,
-        'Your Order Confirmation',
-        `Order #${order.orderNumber}`,
-        EMAIL_STYLES.colors.success
+        'Order Confirmed!',
+        `Order #${order.orderNumber}`
       )
     };
 
-    return await sendMail(mailOptions);
+    await sendMail(mailOptions);
+    console.log(`Order confirmation email sent to ${user.email}`);
   } catch (error) {
     console.error('Error sending order confirmation email:', error);
-    throw error;
   }
 };
 
 /**
- * Send new order notification to admin
- * @param {Object} order - Order object with details
- * @param {Object} user - User object with name and email
- * @returns {Promise}
+ * Send new order notification to the admin.
+ * @param {Object} order - The order object.
+ * @param {Object} user - The user object.
  */
 const sendNewOrderAdminNotification = async (order, user) => {
   try {
-    const orderItemsRows = generateOrderItemsRows(order.items);
-    
+    let pickupDetails = null;
+    if (order.shipping && order.shipping.isPickup) {
+        pickupDetails = await StorePickup.findOne();
+    }
+
+    const orderItemsTable = emailComponents.table(
+      ['Product', 'Qty', 'Price', 'Total'],
+      generateOrderItemsRows(order.items)
+    );
+
+    const shippingInfoHtml = generateShippingInfoHtml(order, pickupDetails);
+
     const content = `
-      <p>A new order has been placed by ${user.name} (${user.email}).</p>
+      <p>A new order has been placed on the website.</p>
       
-      <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Order Summary</h3>
-      ${emailComponents.table(
-        ['Product', 'Qty', 'Price', 'Total'],
-        orderItemsRows
-      )}
+      <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Order Details</h3>
+      ${emailComponents.table([], [
+        [{ content: '<strong>Order Number</strong>' }, { content: order.orderNumber }],
+        [{ content: '<strong>Order Date</strong>' }, { content: new Date(order.createdAt).toLocaleString() }],
+        [{ content: '<strong>Payment Status</strong>' }, { content: order.paymentStatus }],
+        [{ content: '<strong>Order Status</strong>' }, { content: order.status }],
+      ])}
+
+      <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Order Items</h3>
+      ${orderItemsTable}
       
-      <div style="margin: ${EMAIL_STYLES.spacing.medium} 0;">
-        <p><strong>Total:</strong> ₦${order.totalAmount.toFixed(2)}</p>
+      <div style="margin: ${EMAIL_STYLES.spacing.medium} 0; text-align: right;">
+        <p><strong>Subtotal:</strong> ₦${(order.productAmount || 0).toFixed(2)}</p>
+        ${order.shipping.cost > 0 ? `<p><strong>Shipping:</strong> ₦${order.shipping.cost.toFixed(2)}</p>` : ''}
+        <p style="font-size: 1.1em; font-weight: bold;"><strong>Total:</strong> ₦${(order.totalAmount || 0).toFixed(2)}</p>
       </div>
-      
-      <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Customer Details</h3>
+
+      <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Customer Information</h3>
       <div style="background-color: ${EMAIL_STYLES.colors.lightBg}; padding: ${EMAIL_STYLES.spacing.small}; border-radius: ${EMAIL_STYLES.borderRadius};">
-        <p>
-          <strong>Name:</strong> ${user.name}<br>
-          <strong>Email:</strong> ${user.email}<br>
-          <strong>Phone:</strong> ${user.phone || 'N/A'}
-        </p>
+        <p><strong>Name:</strong> ${user.name || 'N/A'}</p>
+        <p><strong>Email:</strong> ${user.email || 'N/A'}</p>
+        <p><strong>Phone:</strong> ${user.phone || 'N/A'}</p>
+        <p><strong>Account Type:</strong> ${user.isGuest ? 'Guest' : 'Registered'}</p>
       </div>
-      
-      <h3 style="color: ${EMAIL_STYLES.colors.darkText}; margin-top: ${EMAIL_STYLES.spacing.medium};">Shipping Information</h3>
+
+      <h3 style="color: ${EMAIL_STYLES.colors.darkText};">Shipping Information</h3>
       <div style="background-color: ${EMAIL_STYLES.colors.lightBg}; padding: ${EMAIL_STYLES.spacing.small}; border-radius: ${EMAIL_STYLES.borderRadius};">
-        <p>
-          <strong>Address:</strong><br>
-          ${order.shippingAddress.street}<br>
-          ${order.shippingAddress.city}, ${order.shippingAddress.state} ${order.shippingAddress.zipCode}<br>
-          ${order.shippingAddress.country}
-        </p>
-        <p>
-          <strong>Shipping Zone:</strong> ${order.shipping && order.shipping.method === 'pickup' ? 'Store Pickup' : 
-            (order.shipping && order.shipping.zone && order.shipping.zone.name ? order.shipping.zone.name : 'Standard Shipping')}
-        </p>
-        ${order.shipping && order.shipping.estimatedDeliveryTime ? 
-          `<p><strong>Estimated Delivery:</strong> ${order.shipping.estimatedDeliveryTime}</p>` : ''}
-        ${order.shipping && order.shipping.cost ? 
-          `<p><strong>Shipping Cost:</strong> ₦${order.shipping.cost.toFixed(2)}</p>` : ''}
+        ${shippingInfoHtml}
       </div>
-      
-      <h3 style="color: ${EMAIL_STYLES.colors.darkText}; margin-top: ${EMAIL_STYLES.spacing.medium};">Payment Details</h3>
-      <div style="background-color: ${EMAIL_STYLES.colors.lightBg}; padding: ${EMAIL_STYLES.spacing.small}; border-radius: ${EMAIL_STYLES.borderRadius};">
-        <p><strong>Method:</strong> ${order.paymentMethod === 'paystack' ? 'Paystack' : order.paymentMethod}</p>
-        <p><strong>Status:</strong> ${order.paymentStatus}</p>
-      </div>
-      
+
       ${emailComponents.button(
-        'View Order Details',
-        `${process.env.FRONTEND_URL}/admin/orders/${order._id}`,
-        EMAIL_STYLES.colors.primary
+        'View Order in Admin',
+        `${process.env.FRONTEND_URL}/admin/orders/${order._id}`
       )}
     `;
 
+    const adminEmail = process.env.ADMIN_EMAIL || 'info@icedeluxewears.com';
+
     const mailOptions = {
-      from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'orders@icedeluxewears.com'}>`,
-      to: process.env.ADMIN_EMAIL || 'info@icedeluxewears.com',
-      subject: `New Order #${order.orderNumber}`,
-      headers: {
-        'X-Priority': '1',
-        'Importance': 'high',
-        'X-MSMail-Priority': 'High',
-        'X-Mailer': 'Ice Deluxe Wears Mailer',
-      },
+      from: `"${process.env.EMAIL_FROM_NAME}" <${process.env.EMAIL_FROM}>`,
+      to: adminEmail,
+      subject: `New Order Received - #${order.orderNumber}`,
       html: baseEmailTemplate(
         content,
         'New Order Received',
         `Order #${order.orderNumber}`,
-        EMAIL_STYLES.colors.success
+        EMAIL_STYLES.colors.secondary
       )
     };
 
-    return await sendMail(mailOptions);
+    await sendMail(mailOptions);
+    console.log(`New order notification sent to ${adminEmail}`);
   } catch (error) {
-    console.error('Error sending new order admin notification:', error);
-    throw error;
-  }
-};
-
-/**
- * Send order status update email to customer
- * @param {Object} order - Order object with details
- * @param {Object} user - User object with name and email
- * @param {Object} options - Additional options
- * @param {Boolean} options.paymentStatusUpdated - Whether payment status was updated
- * @returns {Promise}
- */
-const sendOrderStatusUpdateEmail = async (order, user, options = {}) => {
-  try {
-    // Determine if this is a payment status update or order status update
-    let title, message, color, statusType, statusValue;
-    
-    if (options.paymentStatusUpdated) {
-      // Payment status update configuration
-      const paymentStatusConfig = {
-        completed: {
-          title: 'Payment Confirmed',
-          message: 'We have received your payment for this order.',
-          color: EMAIL_STYLES.colors.success
-        },
-        failed: {
-          title: 'Payment Failed',
-          message: 'There was an issue processing your payment. Please update your payment method.',
-          color: EMAIL_STYLES.colors.danger
-        },
-        pending: {
-          title: 'Payment Pending',
-          message: 'Your payment is being processed.',
-          color: EMAIL_STYLES.colors.primary
-        }
-      };
-      
-      const config = paymentStatusConfig[order.paymentStatus] || {
-        title: 'Payment Status Update',
-        message: 'There has been an update to your payment status.',
-        color: EMAIL_STYLES.colors.primary
-      };
-      
-      title = config.title;
-      message = config.message;
-      color = config.color;
-      statusType = 'Payment Status';
-      statusValue = order.paymentStatus.charAt(0).toUpperCase() + order.paymentStatus.slice(1);
-    } else {
-      // Order status update configuration
-      const orderStatusConfig = {
-        processing: {
-          title: 'Your Order is Being Processed',
-          message: 'We\'re preparing your items for shipment.',
-          color: EMAIL_STYLES.colors.primary
-        },
-        shipped: {
-          title: 'Your Order Has Been Shipped',
-          message: 'Your order is on its way to you!',
-          color: EMAIL_STYLES.colors.success
-        },
-        delivered: {
-          title: 'Your Order Has Been Delivered',
-          message: 'Your order has been delivered. We hope you enjoy your purchase!',
-          color: EMAIL_STYLES.colors.success
-        },
-        cancelled: {
-          title: 'Your Order Has Been Cancelled',
-          message: 'Your order has been cancelled. If you have any questions, please contact our customer support.',
-          color: EMAIL_STYLES.colors.danger
-        }
-      };
-
-      const config = orderStatusConfig[order.status] || {
-        title: 'Order Status Update',
-        message: 'There has been an update to your order.',
-        color: EMAIL_STYLES.colors.primary
-      };
-      
-      title = config.title;
-      message = config.message;
-      color = config.color;
-      statusType = 'Order Status';
-      statusValue = order.status.charAt(0).toUpperCase() + order.status.slice(1);
-    }
-
-    const content = `
-      <p>Hello ${user.name},</p>
-      <p>${message}</p>
-      
-      ${emailComponents.alertBox(
-        `<h3 style="margin-top: 0; color: ${color};">${statusType}: ${statusValue}</h3>`,
-        (statusValue.toLowerCase() === 'cancelled' || statusValue.toLowerCase() === 'failed') ? 'danger' : 'success'
-      )}
-      
-      <div style="margin-top: ${EMAIL_STYLES.spacing.large}; font-size: 14px; color: ${EMAIL_STYLES.colors.lightText};">
-        <p>If you have any questions, please contact our customer support.</p>
-      </div>
-    `;
-
-    const mailOptions = {
-      from: `"${process.env.EMAIL_FROM_NAME || 'Ice Deluxe Wears'}" <${process.env.EMAIL_FROM || 'orders@icedeluxewears.com'}>`,
-      to: user.email,
-      subject: `${title} - Order #${order.orderNumber}`,
-      headers: {
-        'X-Priority': '1',
-        'Importance': 'high',
-        'X-MSMail-Priority': 'High',
-        'X-Mailer': 'Ice Deluxe Wears Mailer',
-      },
-      html: baseEmailTemplate(
-        content,
-        title,
-        `Order #${order.orderNumber}`,
-        color
-      )
-    };
-
-    return await sendMail(mailOptions);
-  } catch (error) {
-    console.error('Error sending order status update email:', error);
-    throw error;
+    console.error('Error sending admin order notification:', error);
   }
 };
 
 module.exports = {
-  sendWelcomeEmail,
   sendOrderConfirmationEmail,
   sendNewOrderAdminNotification,
-  sendOrderStatusUpdateEmail
 };
