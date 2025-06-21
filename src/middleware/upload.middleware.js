@@ -12,14 +12,46 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// Configure upload middleware
+// Configure upload middleware with more generous limits
 const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
+    fileSize: 10 * 1024 * 1024, // 10MB limit (doubled for mobile users)
     files: 5 // Maximum 5 files per request
   }
 });
 
-module.exports = upload;
+// Add a custom error handler for multer
+const handleUpload = (req, res, next) => {
+  const multerUpload = upload.array('images', 5);
+  
+  multerUpload(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      // A Multer error occurred when uploading
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({
+          success: false,
+          message: 'File too large! Please use an image under 10MB or compress your image.'
+        });
+      }
+      return res.status(400).json({
+        success: false,
+        message: `Upload error: ${err.message}`
+      });
+    } else if (err) {
+      // An unknown error occurred
+      return res.status(500).json({
+        success: false,
+        message: err.message
+      });
+    }
+    // Everything went fine
+    next();
+  });
+};
+
+module.exports = {
+  raw: upload,
+  handleUpload
+};

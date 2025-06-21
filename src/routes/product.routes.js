@@ -3,9 +3,12 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const Product = require('../models/product.model');
 const { protect, restrictTo } = require('../middleware/auth.middleware');
-const upload = require('../middleware/upload.middleware');
+const uploadMiddleware = require('../middleware/upload.middleware');
 const { uploadFile, deleteFile, getSignedUrl } = require('../config/s3.config');
 const transformS3Urls = require('../middleware/s3-url.middleware');
+
+// Use the raw upload for backward compatibility with existing routes
+const upload = uploadMiddleware.raw;
 
 // Apply S3 URL transformation middleware to all routes
 router.use(transformS3Urls);
@@ -14,6 +17,27 @@ router.use(transformS3Urls);
  * @swagger
  * components:
  *   schemas:
+ *     ProductVariant:
+ *       type: object
+ *       properties:
+ *         color:
+ *           type: string
+ *           description: Color variant
+ *         size:
+ *           type: string
+ *           description: Size variant
+ *         price:
+ *           type: number
+ *           description: Variant-specific price (optional, falls back to product price)
+ *         stock:
+ *           type: number
+ *           description: Variant-specific stock quantity
+ *         sku:
+ *           type: string
+ *           description: Variant-specific SKU
+ *         image:
+ *           type: string
+ *           description: Variant-specific image URL
  *     Product:
  *       type: object
  *       required:
@@ -28,7 +52,7 @@ router.use(transformS3Urls);
  *           description: Product name
  *         price:
  *           type: number
- *           description: Product price
+ *           description: Base product price
  *         description:
  *           type: string
  *           description: Product description
@@ -37,7 +61,25 @@ router.use(transformS3Urls);
  *           description: Product category ID
  *         stock:
  *           type: number
- *           description: Available stock
+ *           description: Base product stock (for non-variant products)
+ *         sku:
+ *           type: string
+ *           description: Product SKU
+ *         availableColors:
+ *           type: array
+ *           items:
+ *             type: string
+ *           description: List of available color options
+ *         availableSizes:
+ *           type: array
+ *           items:
+ *             type: string
+ *           description: List of available size options
+ *         variants:
+ *           type: array
+ *           items:
+ *             $ref: '#/components/schemas/ProductVariant'
+ *           description: Array of product variants with color, size, price, stock, and image
  *         images:
  *           type: array
  *           items:
@@ -126,7 +168,7 @@ router.use(transformS3Urls);
  *                   items:
  *                     $ref: '#/components/schemas/Product'
  *   post:
- *     summary: Create a new product
+ *     summary: Create a new product with variants
  *     tags: [Products]
  *     security:
  *       - bearerAuth: []
@@ -145,14 +187,32 @@ router.use(transformS3Urls);
  *             properties:
  *               name:
  *                 type: string
+ *                 description: Product name
  *               price:
  *                 type: number
+ *                 description: Base product price
  *               description:
  *                 type: string
+ *                 description: Product description
  *               category:
  *                 type: string
+ *                 description: Category ID
  *               stock:
  *                 type: number
+ *                 description: Base stock quantity
+ *               sku:
+ *                 type: string
+ *                 description: Product SKU (auto-generated if not provided)
+ *               availableColors:
+ *                 type: string
+ *                 description: Comma-separated list of colors (e.g. "Red,Blue,Green")
+ *               availableSizes:
+ *                 type: string
+ *                 description: Comma-separated list of sizes (e.g. "S,M,L,XL")
+ *               variants:
+ *                 type: string
+ *                 description: JSON string array of variant objects
+ *                 example: "[{\"color\":\"Red\",\"size\":\"M\",\"price\":1999,\"stock\":10,\"sku\":\"RED-M-123\"}]"
  *               images:
  *                 type: array
  *                 items:
@@ -538,7 +598,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', protect, restrictTo('admin', 'superadmin'), upload.array('images', 5), async (req, res) => {
+router.post('/', protect, restrictTo('admin', 'superadmin'), uploadMiddleware.handleUpload, async (req, res) => {
   try {
     const productData = req.body;
     productData.images = [];
@@ -559,38 +619,144 @@ router.post('/', protect, restrictTo('admin', 'superadmin'), upload.array('image
       productData.brand = 'Ice Deluxe'; // Default brand name
     }
 
-    // Upload images to S3
-    if (req.files && req.files.length > 0) {
-      for (const file of req.files) {
-        const key = `products/${Date.now()}-${file.originalname}`;
-        const imageUrl = await uploadFile(file, key);
-        productData.images.push({ url: imageUrl, key: key });
-      }
+    // Process variants data - ensure availableColors and availableSizes are arrays
+    if (productData.availableColors && typeof productData.availableColors === 'string') {
+      // Convert comma-separated string to array
+      productData.availableColors = productData.availableColors.split(',').map(color => color.trim()).filter(Boolean);
+    } else if (!Array.isArray(productData.availableColors)) {
+      productData.availableColors = [];
     }
 
-    const product = await Product.create(productData);
+    if (productData.availableSizes && typeof productData.availableSizes === 'string') {
+      // Convert comma-separated string to array
+      productData.availableSizes = productData.availableSizes.split(',').map(size => size.trim()).filter(Boolean);
+    } else if (!Array.isArray(productData.availableSizes)) {
+      productData.availableSizes = [];
+    }
     
-    // Process product images to generate pre-signed URLs
-    if (product.images && product.images.length > 0) {
-      for (const image of product.images) {
-        if (image.key) {
-          try {
-            // Generate a pre-signed URL with 1 hour expiration
-            const signedUrl = await getSignedUrl(image.key, 3600);
-            // Replace the original URL with the signed URL
-            image.url = signedUrl;
-            console.log(`Generated signed URL for ${image.key}`);
-          } catch (error) {
-            console.error(`Error generating signed URL for ${image.key}:`, error);
+    // Initialize empty variantMatrix if not present
+    if (!productData.variantMatrix) {
+      productData.variantMatrix = new Map();
+    }
+
+    // Initialize variant matrix if variants are provided
+    if (productData.variants) {
+      try {
+        // Parse JSON string to array of variant objects
+        const variantsArray = JSON.parse(productData.variants);
+        
+        // Create product first without variants
+        delete productData.variants;
+        
+        // Upload images to S3
+        if (req.files && req.files.length > 0) {
+          for (const file of req.files) {
+            const key = `products/${Date.now()}-${file.originalname}`;
+            const imageUrl = await uploadFile(file, key);
+            productData.images.push({ url: imageUrl, key: key });
+          }
+        }
+
+        // Create the product
+        const product = await Product.create(productData);
+
+        // Add variants to the product after it's created
+        if (variantsArray && Array.isArray(variantsArray) && variantsArray.length > 0) {
+          // Ensure product.availableColors and product.availableSizes are arrays
+          if (!product.availableColors) product.availableColors = [];
+          if (!product.availableSizes) product.availableSizes = [];
+          
+          for (const variant of variantsArray) {
+            if (variant.color && variant.size) {
+              // Add color and size to available arrays if not already present
+              if (!product.availableColors.includes(variant.color)) {
+                product.availableColors.push(variant.color);
+              }
+              if (!product.availableSizes.includes(variant.size)) {
+                product.availableSizes.push(variant.size);
+              }
+              
+              // Create variant key as color:size
+              const variantKey = `${variant.color}:${variant.size}`;
+              
+              // Generate variant-specific SKU if not provided
+              if (!variant.sku) {
+                variant.sku = `${product.sku}-${variant.color.slice(0, 2).toUpperCase()}-${variant.size}`;
+              }
+              
+              // Set variant in product's variantMatrix
+              product.setVariant(variantKey, {
+                price: variant.price || product.price,
+                stock: variant.stock || 0,
+                sku: variant.sku,
+                image: variant.image || (product.images.length > 0 ? product.images[0].url : '')
+              });
+            }
+          }
+          await product.save();
+        }
+        
+        // Process product images to generate pre-signed URLs
+        if (product.images && product.images.length > 0) {
+          for (const image of product.images) {
+            if (image.key) {
+              try {
+                // Generate a pre-signed URL with 1 hour expiration
+                const signedUrl = await getSignedUrl(image.key, 3600);
+                // Replace the original URL with the signed URL
+                image.url = signedUrl;
+              } catch (error) {
+                console.error(`Error generating signed URL for ${image.key}:`, error);
+              }
+            }
+          }
+        }
+        
+        return res.status(201).json({
+          success: true,
+          data: product
+        });
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: `Error processing variants: ${error.message}`
+        });
+      }
+    } else {
+      // No variants, proceed with regular product creation
+      
+      // Upload images to S3
+      if (req.files && req.files.length > 0) {
+        for (const file of req.files) {
+          const key = `products/${Date.now()}-${file.originalname}`;
+          const imageUrl = await uploadFile(file, key);
+          productData.images.push({ url: imageUrl, key: key });
+        }
+      }
+
+      const product = await Product.create(productData);
+      
+      // Process product images to generate pre-signed URLs
+      if (product.images && product.images.length > 0) {
+        for (const image of product.images) {
+          if (image.key) {
+            try {
+              // Generate a pre-signed URL with 1 hour expiration
+              const signedUrl = await getSignedUrl(image.key, 3600);
+              // Replace the original URL with the signed URL
+              image.url = signedUrl;
+            } catch (error) {
+              console.error(`Error generating signed URL for ${image.key}:`, error);
+            }
           }
         }
       }
+      
+      res.status(201).json({
+        success: true,
+        data: product
+      });
     }
-    
-    res.status(201).json({
-      success: true,
-      data: product
-    });
   } catch (error) {
     res.status(400).json({
       success: false,
@@ -603,7 +769,7 @@ router.post('/', protect, restrictTo('admin', 'superadmin'), upload.array('image
  * @swagger
  * /products/{id}:
  *   patch:
- *     summary: Update a product
+ *     summary: Update a product with variant support
  *     tags: [Products]
  *     security:
  *       - bearerAuth: []
@@ -613,29 +779,57 @@ router.post('/', protect, restrictTo('admin', 'superadmin'), upload.array('image
  *         required: true
  *         schema:
  *           type: string
+ *         description: Product ID
  *     requestBody:
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
  *             properties:
  *               name:
  *                 type: string
+ *                 description: Product name
  *               price:
  *                 type: number
+ *                 description: Base product price
  *               description:
  *                 type: string
+ *                 description: Product description
  *               category:
  *                 type: string
+ *                 description: Category ID
  *               stock:
  *                 type: number
+ *                 description: Base stock quantity
+ *               sku:
+ *                 type: string
+ *                 description: Product SKU
+ *               availableColors:
+ *                 type: string
+ *                 description: Comma-separated list of colors (e.g. "Red,Blue,Green")
+ *               availableSizes:
+ *                 type: string
+ *                 description: Comma-separated list of sizes (e.g. "S,M,L,XL")
+ *               variants:
+ *                 type: string
+ *                 description: JSON string array of variant objects
+ *                 example: "[{\"color\":\"Red\",\"size\":\"M\",\"price\":1999,\"stock\":10,\"sku\":\"RED-M-123\"}]"
+ *               clearVariants:
+ *                 type: boolean
+ *                 description: If true, clears all existing variants before adding new ones
+ *               images:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *                 description: Product images
  *     responses:
  *       200:
  *         description: Product updated successfully
  *       404:
  *         description: Product not found
  */
-router.patch('/:id', protect, restrictTo('admin', 'superadmin'), upload.array('images', 5), async (req, res) => {
+router.patch('/:id', protect, restrictTo('admin', 'superadmin'), uploadMiddleware.handleUpload, async (req, res) => {
   try {
     // First find the existing product
     const existingProduct = await Product.findById(req.params.id);
@@ -664,6 +858,27 @@ router.patch('/:id', protect, restrictTo('admin', 'superadmin'), upload.array('i
       }
     }
     
+    // Process variants related fields
+    // Handle availableColors
+    if (productData.availableColors) {
+      if (productData.availableColors === 'string' || productData.availableColors === '') {
+        delete productData.availableColors;
+      } else {
+        // Convert comma-separated string to array
+        productData.availableColors = productData.availableColors.split(',').map(color => color.trim());
+      }
+    }
+    
+    // Handle availableSizes
+    if (productData.availableSizes) {
+      if (productData.availableSizes === 'string' || productData.availableSizes === '') {
+        delete productData.availableSizes;
+      } else {
+        // Convert comma-separated string to array
+        productData.availableSizes = productData.availableSizes.split(',').map(size => size.trim());
+      }
+    }
+    
     // Handle image uploads if any
     if (req.files && req.files.length > 0) {
       // Initialize images array if it doesn't exist in the update data
@@ -684,33 +899,119 @@ router.patch('/:id', protect, restrictTo('admin', 'superadmin'), upload.array('i
       delete productData.images;
     }
 
-    // Update the product
-    const product = await Product.findByIdAndUpdate(
-      req.params.id,
-      productData,
-      { new: true, runValidators: true }
-    );
+    // Handle variants
+    if (productData.variants) {
+      try {
+        // Parse JSON string to array of variant objects
+        const variantsArray = JSON.parse(productData.variants);
+        
+        // Remove variants from productData as we'll handle them separately
+        delete productData.variants;
+        
+        // Update the product with non-variant data first
+        const updatedProduct = await Product.findByIdAndUpdate(
+          req.params.id,
+          productData,
+          { new: true, runValidators: true }
+        );
+        
+        // Clear existing variants if requested
+        if (productData.clearVariants === 'true' || productData.clearVariants === true) {
+          // Clear variant matrix
+          updatedProduct.variantMatrix = new Map();
+          // Keep the updated colors and sizes from productData, or clear them if not provided
+          updatedProduct.availableColors = productData.availableColors || [];
+          updatedProduct.availableSizes = productData.availableSizes || [];
+        }
+        
+        // Add new variants
+        if (variantsArray && Array.isArray(variantsArray) && variantsArray.length > 0) {
+          for (const variant of variantsArray) {
+            if (variant.color && variant.size) {
+              // Add color and size to available arrays if not already present
+              if (!updatedProduct.availableColors.includes(variant.color)) {
+                updatedProduct.availableColors.push(variant.color);
+              }
+              if (!updatedProduct.availableSizes.includes(variant.size)) {
+                updatedProduct.availableSizes.push(variant.size);
+              }
+              
+              // Create variant key as color:size
+              const variantKey = `${variant.color}:${variant.size}`;
+              
+              // Generate variant-specific SKU if not provided
+              if (!variant.sku) {
+                variant.sku = `${updatedProduct.sku}-${variant.color.slice(0, 2).toUpperCase()}-${variant.size}`;
+              }
+              
+              // Set variant in product's variantMatrix
+              updatedProduct.setVariant(variantKey, {
+                price: variant.price || updatedProduct.price,
+                stock: variant.stock || 0,
+                sku: variant.sku,
+                image: variant.image || (updatedProduct.images.length > 0 ? updatedProduct.images[0].url : '')
+              });
+            }
+          }
+        }
+        
+        await updatedProduct.save();
+        
+        // Process product images to generate pre-signed URLs
+        if (updatedProduct.images && updatedProduct.images.length > 0) {
+          for (const image of updatedProduct.images) {
+            if (image.key) {
+              try {
+                // Generate a pre-signed URL with 1 hour expiration
+                const signedUrl = await getSignedUrl(image.key, 3600);
+                // Replace the original URL with the signed URL
+                image.url = signedUrl;
+              } catch (error) {
+                console.error(`Error generating signed URL for ${image.key}:`, error);
+              }
+            }
+          }
+        }
+        
+        return res.status(200).json({
+          success: true,
+          data: updatedProduct
+        });
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: `Error processing variants: ${error.message}`
+        });
+      }
+    } else {
+      // No variants to update, proceed with regular update
+      const product = await Product.findByIdAndUpdate(
+        req.params.id,
+        productData,
+        { new: true, runValidators: true }
+      );
 
-    // Process product images to generate pre-signed URLs
-    if (product.images && product.images.length > 0) {
-      for (const image of product.images) {
-        if (image.key) {
-          try {
-            // Generate a pre-signed URL with 1 hour expiration
-            const signedUrl = await getSignedUrl(image.key, 3600);
-            // Replace the original URL with the signed URL
-            image.url = signedUrl;
-          } catch (error) {
-            console.error(`Error generating signed URL for ${image.key}:`, error);
+      // Process product images to generate pre-signed URLs
+      if (product.images && product.images.length > 0) {
+        for (const image of product.images) {
+          if (image.key) {
+            try {
+              // Generate a pre-signed URL with 1 hour expiration
+              const signedUrl = await getSignedUrl(image.key, 3600);
+              // Replace the original URL with the signed URL
+              image.url = signedUrl;
+            } catch (error) {
+              console.error(`Error generating signed URL for ${image.key}:`, error);
+            }
           }
         }
       }
-    }
 
-    res.status(200).json({
-      success: true,
-      data: product
-    });
+      res.status(200).json({
+        success: true,
+        data: product
+      });
+    }
   } catch (error) {
     res.status(400).json({
       success: false,

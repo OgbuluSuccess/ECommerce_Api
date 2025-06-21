@@ -45,6 +45,27 @@ const productSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Please provide product brand']
   },
+  // Available colors and sizes for variants
+  availableColors: {
+    type: [String],
+    default: []
+  },
+  availableSizes: {
+    type: [String],
+    default: []
+  },
+  // Variant matrix stores variant data keyed by color:size
+  variantMatrix: {
+    type: Map,
+    of: {
+      price: Number,
+      stock: Number,
+      sku: String,
+      image: String
+    },
+    default: new Map()
+  },
+  // Legacy variants field for backward compatibility
   variants: [{
     name: String,
     sku: String,
@@ -120,6 +141,38 @@ productSchema.pre('save', function(next) {
   }
   next();
 });
+
+// Method to set a variant in the variantMatrix
+productSchema.methods.setVariant = function(key, data) {
+  if (!this.variantMatrix) {
+    this.variantMatrix = new Map();
+  }
+  this.variantMatrix.set(key, data);
+};
+
+// Method to get a variant from the variantMatrix
+productSchema.methods.getVariant = function(key) {
+  if (!this.variantMatrix) {
+    return null;
+  }
+  return this.variantMatrix.get(key);
+};
+
+// Method to check if a variant exists
+productSchema.methods.hasVariant = function(key) {
+  if (!this.variantMatrix) {
+    return false;
+  }
+  return this.variantMatrix.has(key);
+};
+
+// Method to delete a variant
+productSchema.methods.deleteVariant = function(key) {
+  if (!this.variantMatrix) {
+    return false;
+  }
+  return this.variantMatrix.delete(key);
+};
 
 const Product = mongoose.model('Product', productSchema);
 

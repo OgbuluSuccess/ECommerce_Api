@@ -20,7 +20,23 @@ const orderSchema = new mongoose.Schema({
     price: {
       type: Number,
       required: true
-    }
+    },
+    // Fields for color and size variants
+    color: {
+      type: String,
+      default: 'default'
+    },
+    size: {
+      type: String,
+      default: 'default'
+    },
+    variantKey: {
+      type: String,
+      default: 'default:default'
+    },
+    variantImage: String,
+    productName: String,
+    variantSku: String
   }],
   productAmount: {
     type: Number,

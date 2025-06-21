@@ -176,11 +176,29 @@ router.post('/webhook/paystack', async (req, res) => {
           order.paymentDetails.verificationResponse = event.data;
           await order.save();
 
-          // Update product stock
+          // Update product stock for variants
           for (const item of order.items) {
             const product = await Product.findById(item.product);
-            if (product) {
-              product.stock -= item.quantity;
+            if (!product) continue;
+            
+            // Check if this is a variant
+            if (item.variantKey && item.variantKey !== 'default:default' && 
+                product.variantMatrix && product.variantMatrix.size > 0) {
+              // Get the variant
+              const variant = product.variantMatrix.get(item.variantKey);
+              if (variant) {
+                // Update variant stock
+                variant.stock = Math.max(0, variant.stock - item.quantity);
+                product.variantMatrix.set(item.variantKey, variant);
+                await product.save();
+              } else {
+                // Fallback to updating main product stock if variant not found
+                product.stock = Math.max(0, product.stock - item.quantity);
+                await product.save();
+              }
+            } else {
+              // Update main product stock for non-variant products
+              product.stock = Math.max(0, product.stock - item.quantity);
               await product.save();
             }
           }
@@ -236,8 +254,8 @@ router.post('/webhook/paystack', async (req, res) => {
  *               - country
  *               - state
  *               - city
- *               - cartItems
  *               - shippingMethod
+ *               - cartItems
  *             properties:
  *               firstName:
  *                 type: string
@@ -246,8 +264,6 @@ router.post('/webhook/paystack', async (req, res) => {
  *               email:
  *                 type: string
  *               phone:
- *                 type: string
- *               alternativePhone:
  *                 type: string
  *               shippingAddress:
  *                 type: string
@@ -263,27 +279,33 @@ router.post('/webhook/paystack', async (req, res) => {
  *                 type: string
  *               shippingMethod:
  *                 type: string
+ *               shippingZoneId:
+ *                 type: string
  *               cartItems:
  *                 type: array
  *                 items:
  *                   type: object
+ *                   required:
+ *                     - productId
+ *                     - quantity
  *                   properties:
  *                     productId:
  *                       type: string
- *                       description: MongoDB ObjectId of the product
- *                       example: 60d21b4667d0d8992e610c85
  *                     quantity:
- *                       type: integer
- *                       description: Number of items to purchase
- *                       example: 2
- *               shippingZoneId:
- *                 type: string
- *                 description: ID of the shipping zone or 'pickup' for store pickup
- *                 example: 60d21b4667d0d8992e610c85
+ *                       type: number
+ *                     color:
+ *                       type: string
+ *                       description: Color variant of the product
+ *                     size:
+ *                       type: string
+ *                       description: Size variant of the product
  *               totalAmount:
  *                 type: number
  *                 description: Total amount including products and shipping, calculated by frontend
  *                 example: 25000
+ *               alternativePhone:
+ *                 type: string
+ *                 description: Optional secondary phone number
  *     responses:
  *       200:
  *         description: Checkout successful, redirecting to payment
@@ -331,21 +353,56 @@ router.post('/guest', async (req, res) => {
         });
       }
 
-      if (product.stock < item.quantity) {
+      // Get variant details
+      const color = item.color || 'default';
+      const size = item.size || 'default';
+      const variantKey = `${color}:${size}`;
+      
+      // Check if this variant exists and has stock
+      let variantPrice = product.price;
+      let variantStock = product.stock;
+      let variantImage = product.images && product.images.length > 0 ? product.images[0].url : '';
+      let variantSku = product.sku;
+      
+      // If product has variants, check the specific variant
+      if (product.variantMatrix && product.variantMatrix.size > 0) {
+        const variant = product.variantMatrix.get(variantKey);
+        
+        if (variant) {
+          variantPrice = variant.price || product.price;
+          variantStock = variant.stock;
+          if (variant.image) variantImage = variant.image;
+          if (variant.sku) variantSku = variant.sku;
+        } else if (color !== 'default' || size !== 'default') {
+          // If a specific variant was requested but doesn't exist
+          return res.status(404).json({
+            success: false,
+            message: `The selected variant (${color}/${size}) for ${product.name} is not available`
+          });
+        }
+      }
+
+      // Check stock for the specific variant
+      if (variantStock < item.quantity) {
         return res.status(400).json({
           success: false,
-          message: `Insufficient stock for product: ${product.name}`
+          message: `Insufficient stock for ${product.name} (${color}/${size})`
         });
       }
 
       orderItems.push({
         product: product._id,
         quantity: item.quantity,
-        price: product.price,
-        name: product.name
+        price: variantPrice,
+        productName: product.name,
+        color,
+        size,
+        variantKey,
+        variantImage,
+        variantSku
       });
 
-      totalAmount += product.price * item.quantity;
+      totalAmount += variantPrice * item.quantity;
     }
 
     // Check if user exists or create a new guest user
@@ -569,13 +626,54 @@ router.post('/guest', async (req, res) => {
  *             properties:
  *               shippingAddress:
  *                 type: object
+ *                 properties:
+ *                   street:
+ *                     type: string
+ *                   city:
+ *                     type: string
+ *                   state:
+ *                     type: string
+ *                   country:
+ *                     type: string
+ *                   postalCode:
+ *                     type: string
+ *               city:
+ *                 type: string
+ *               state:
+ *                 type: string
+ *               country:
+ *                 type: string
  *               shippingMethod:
  *                 type: string
+ *                 enum: [standard, express, pickup]
+ *               shippingZoneId:
+ *                 type: string
+ *                 description: ID of the shipping zone or 'pickup' for store pickup
  *               note:
  *                 type: string
  *     responses:
  *       200:
  *         description: Checkout successful, redirecting to payment
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     authorization_url:
+ *                       type: string
+ *                     reference:
+ *                       type: string
+ *                     order_id:
+ *                       type: string
+ *                     order_number:
+ *                       type: string
  */
 router.post('/user', protect, async (req, res) => {
   try {
@@ -614,19 +712,64 @@ router.post('/user', protect, async (req, res) => {
     const orderItems = [];
     for (const item of cart.items) {
       const product = item.product; // Already populated
-      if (!product || product.stock < item.quantity) {
+      if (!product) {
         return res.status(400).json({
           success: false,
-          message: `Insufficient stock for product: ${product ? product.name : 'Unknown Product'}`
+          message: 'Product not found in cart'
         });
       }
+      
+      // Get variant details from cart item
+      const color = item.color || 'default';
+      const size = item.size || 'default';
+      const variantKey = item.variantKey || `${color}:${size}`;
+      
+      // Check if this variant exists and has stock
+      let variantPrice = item.price || product.price;
+      let variantStock = product.stock;
+      let variantImage = item.variantImage || (product.images && product.images.length > 0 ? product.images[0].url : '');
+      let variantSku = item.variantSku || product.sku;
+      
+      // If product has variants, check the specific variant
+      if (product.variantMatrix && product.variantMatrix.size > 0) {
+        const variant = product.variantMatrix.get(variantKey);
+        
+        if (variant) {
+          variantStock = variant.stock;
+          // We use the price from the cart item as it was set when adding to cart
+          if (!item.price) variantPrice = variant.price || product.price;
+          if (!item.variantImage && variant.image) variantImage = variant.image;
+          if (!item.variantSku && variant.sku) variantSku = variant.sku;
+        } else if (color !== 'default' || size !== 'default') {
+          // If a specific variant was requested but doesn't exist
+          return res.status(404).json({
+            success: false,
+            message: `The selected variant (${color}/${size}) for ${product.name} is not available`
+          });
+        }
+      }
+
+      // Check stock for the specific variant
+      if (variantStock < item.quantity) {
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient stock for ${product.name} (${color}/${size})`
+        });
+      }
+      
       orderItems.push({
         product: product._id,
         quantity: item.quantity,
-        price: product.price,
-        name: product.name
+        price: variantPrice,
+        productName: item.productName || product.name,
+        color,
+        size,
+        variantKey,
+        variantImage,
+        variantSku
       });
-      productTotalAmount += product.price * item.quantity;
+      
+      productTotalAmount += variantPrice * item.quantity;
     }
 
     // Format shipping address only if it's not a pickup
@@ -777,6 +920,33 @@ router.post('/user', protect, async (req, res) => {
       payment_provider: 'paystack'
     };
     await order.save();
+    
+    // Update product stock for variants
+    for (const item of orderItems) {
+      const product = await Product.findById(item.product);
+      if (!product) continue;
+      
+      // Check if this is a variant
+      if (item.variantKey && item.variantKey !== 'default:default' && 
+          product.variantMatrix && product.variantMatrix.size > 0) {
+        // Get the variant
+        const variant = product.variantMatrix.get(item.variantKey);
+        if (variant) {
+          // Update variant stock
+          variant.stock = Math.max(0, variant.stock - item.quantity);
+          product.variantMatrix.set(item.variantKey, variant);
+          await product.save();
+        } else {
+          // Fallback to updating main product stock if variant not found
+          product.stock = Math.max(0, product.stock - item.quantity);
+          await product.save();
+        }
+      } else {
+        // Update main product stock for non-variant products
+        product.stock = Math.max(0, product.stock - item.quantity);
+        await product.save();
+      }
+    }
 
     // Clear cart after successful order creation
     cart.items = [];
