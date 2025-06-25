@@ -17,6 +17,24 @@ router.use(transformS3Urls);
  * @swagger
  * components:
  *   schemas:
+ *     Category:
+ *       type: object
+ *       properties:
+ *         _id:
+ *           type: string
+ *           description: Category ID
+ *         name:
+ *           type: string
+ *           description: Category name
+ *         description:
+ *           type: string
+ *           description: Category description
+ *         slug:
+ *           type: string
+ *           description: URL-friendly category name
+ *         parent:
+ *           type: string
+ *           description: Parent category ID (null for top-level categories)
  *     ProductVariant:
  *       type: object
  *       properties:
@@ -57,8 +75,8 @@ router.use(transformS3Urls);
  *           type: string
  *           description: Product description
  *         category:
- *           type: string
- *           description: Product category ID
+ *           $ref: '#/components/schemas/Category'
+ *           description: Product category object
  *         stock:
  *           type: number
  *           description: Base product stock (for non-variant products)
@@ -269,7 +287,10 @@ router.get('/api/products/all', getAllProducts);
 // Function to get all products
 async function getAllProducts(req, res) {
   try {
-    const products = await Product.find().populate('category');
+    const products = await Product.find().populate({
+      path: 'category',
+      select: 'name description slug parent'
+    });
     
     // Process product images to generate pre-signed URLs
     for (const product of products) {
@@ -400,6 +421,24 @@ router.get('/', async (req, res) => {
     // Pagination
     const skip = (Number(page) - 1) * Number(limit);
     pipeline.push({ $skip: skip }, { $limit: Number(limit) });
+
+    // Add lookup stage to populate category details
+    pipeline.push({
+      $lookup: {
+        from: 'categories',
+        localField: 'category',
+        foreignField: '_id',
+        as: 'category'
+      }
+    });
+
+    // Unwind category array to object
+    pipeline.push({
+      $unwind: {
+        path: '$category',
+        preserveNullAndEmptyArrays: true
+      }
+    });
 
     // Field selection
     if (fields) {
