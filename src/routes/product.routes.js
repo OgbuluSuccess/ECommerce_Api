@@ -637,10 +637,22 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// Maximum products allowed per category
+const MAX_PRODUCTS_PER_CATEGORY = 1000; // Adjust this value as needed
+
 router.post('/', protect, restrictTo('admin', 'superadmin'), uploadMiddleware.handleUpload, async (req, res) => {
   try {
     const productData = req.body;
     productData.images = [];
+
+    // Check if category exists and has not reached product limit
+    const categoryProductCount = await Product.countDocuments({ category: productData.category });
+    if (categoryProductCount >= MAX_PRODUCTS_PER_CATEGORY) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot add more products to this category. Maximum limit of ${MAX_PRODUCTS_PER_CATEGORY} products reached.`
+      });
+    }
 
     // Add required fields if not provided
     productData.createdBy = req.user.id; // Add the current user as creator
