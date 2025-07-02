@@ -418,9 +418,11 @@ router.get('/', async (req, res) => {
     }, {});
     pipeline.push({ $sort: sortFields });
 
-    // Pagination
-    const skip = (Number(page) - 1) * Number(limit);
-    pipeline.push({ $skip: skip }, { $limit: Number(limit) });
+    // Pagination - only apply if explicitly requested in query params
+    if (req.query.page || req.query.limit) {
+      const skip = (Number(page) - 1) * Number(limit);
+      pipeline.push({ $skip: skip }, { $limit: Number(limit) });
+    }
 
     // Add lookup stage to populate category details
     pipeline.push({
@@ -600,7 +602,9 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id).populate('ratings.user', 'name');
+    const product = await Product.findById(req.params.id)
+      .populate('ratings.user', 'name')
+      .populate('category');
     if (!product) {
       return res.status(404).json({
         success: false,
